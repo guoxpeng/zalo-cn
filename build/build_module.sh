@@ -43,6 +43,76 @@ cp ../classes2.dex ./classes2.dex              # 实际 hook 代码
 cp ../../../data/translations.json ./assets/translations.json
 cp ../../../data/src_map_compact.json ./assets/src_map.json
 printf 'com.zalocn.MainHook\n' > ./assets/xposed_init
+
+echo "== 4b. 生成 web_inject.js（WebView H5 页面 DOM 翻译脚本）=="
+python - <<'PYEOF'
+import json
+base = '../../../data'
+with open(base + '/src_map_compact.json', encoding='utf-8') as f:
+    m = json.load(f)
+D = {}
+for lang in ('en', 'vi'):
+    for k, v in m.get(lang, {}).items():
+        if not k or not v or k == v:
+            continue
+        if len(k) < 2:
+            continue
+        # 跳过含 HTML/占位符/换行的键（DOM 文本节点不会出现这些）
+        if '<' in k or '>' in k or '{' in k or '}' in k or '\n' in k or '\r' in k:
+            continue
+        D.setdefault(k, v)
+js_dict = json.dumps(D, ensure_ascii=False, separators=(',', ':'))
+js = '''(function(){
+if(window.__ZH_DICT_INJECTED){return;}window.__ZH_DICT_INJECTED=true;
+var D=__DICT__;
+function tr(n){
+  var v=n.nodeValue;if(!v)return;
+  var t=v.replace(/^[\s\u00a0]+|[\s\u00a0]+$/g,'');
+  if(!t||t.length<2)return;
+  var r=D[t];
+  if(r&&r!==t){n.nodeValue=v.replace(t,r);}
+}
+function walk(root){
+  var w=document.createTreeWalker(root,NodeFilter.SHOW_TEXT,null);
+  var n,c=0;
+  while(n=w.nextNode()){
+    var p=n.parentNode;
+    if(p&&(p.tagName==='SCRIPT'||p.tagName==='STYLE'||p.tagName==='TEXTAREA'||p.tagName==='INPUT'||p.tagName==='NOSCRIPT'||p.tagName==='SELECT'))continue;
+    tr(n);
+    if(++c>8000)break;
+  }
+}
+function init(){
+  if(!document.body)return;
+  walk(document.body);
+  var phs=document.querySelectorAll('input[placeholder],textarea[placeholder]');
+  for(var i=0;i<phs.length;i++){
+    var ph=phs[i].getAttribute('placeholder');
+    if(ph&&D[ph])phs[i].setAttribute('placeholder',D[ph]);
+  }
+  if(window.MutationObserver){
+    try{
+      var mo=new MutationObserver(function(muts){
+        for(var i=0;i<muts.length;i++){
+          var m=muts[i];
+          if(m.type!=='childList'||!m.addedNodes)continue;
+          for(var j=0;j<m.addedNodes.length;j++){
+            var nd=m.addedNodes[j];
+            if(nd.nodeType===3){tr(nd);}
+            else if(nd.nodeType===1){walk(nd);}
+          }
+        }
+      });
+      mo.observe(document.body,{childList:true,subtree:true});
+    }catch(e){}
+  }
+}
+if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',init);}else{init();}
+})();'''.replace('__DICT__', js_dict)
+with open('assets/web_inject.js', 'w', encoding='utf-8') as f:
+    f.write(js)
+print('web_inject entries:', len(D), 'size:', len(js.encode('utf-8')))
+PYEOF
 cd ../..
 
 echo "== 5. zip（resources.arsc 不压缩）+ zipalign + sign =="

@@ -3,6 +3,8 @@ package com.zalocn;
 import android.app.Application;
 import android.content.Context;
 import android.content.res.Resources;
+import android.webkit.WebView;
+import android.webkit.WebViewClient;
 import android.widget.TextView;
 
 import org.json.JSONObject;
@@ -254,6 +256,15 @@ public class MainHook implements IXposedHookLoadPackage {
         // 文本存在 ZOMText -> ZOMTextSpan[].text 中。hook prepareTextLayout 在渲染前
         // 遍历 span 并精确替换为中文。仅替换完全一致的字符串，不触碰网络/数据。
         hookZinstantText(lpparam);
+
+        // 钱包 Activity/Card 等 H5（WebView）页面：Chromium 渲染，hook 完全够不着，
+        // 改为页面加载完成后注入 JS，按字典精确替换 DOM 文本节点（含动态内容）。
+        try {
+            hookWebView();
+            XposedBridge.log(TAG + " WebView hook installed");
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + " WebView hook fail: " + t);
+        }
 
         int size = zhByName == null ? -1 : zhByName.size();
         XposedBridge.log(TAG + " module loaded, translations: " + size);
@@ -523,5 +534,122 @@ public class MainHook implements IXposedHookLoadPackage {
             checkedIds.add(Integer.valueOf(id));
         }
         return zh;
+    }
+
+    /**
+     * WebView H5 页面汉化：
+     * 1) hook setWebViewClient，把应用的 client 包装成 ZhWebViewClient，
+     *    onPageFinished/onPageCommitVisible 时注入翻译脚本；
+     * 2) 兜底 hook WebViewClient.onPageFinished 基类方法（应用用默认 client 时也能命中）。
+     * 注入脚本按字典精确替换文本节点，MutationObserver 覆盖动态内容。
+     */
+    private static void hookWebView() {
+        final String js = loadWebInjectJs();
+        if (js == null) {
+            XposedBridge.log(TAG + " web_inject.js not found, WebView translation disabled");
+            return;
+        }
+        try {
+            XposedHelpers.findAndHookMethod(WebView.class, "setWebViewClient", WebViewClient.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            try {
+                                final WebView wv = (WebView) param.thisObject;
+                                WebViewClient orig = (WebViewClient) param.args[0];
+                                if (orig == null || orig instanceof ZhWebViewClient) {
+                                    return;
+                                }
+                                wv.setWebViewClient(new ZhWebViewClient(orig, js));
+                            } catch (Throwable t) {
+                                XposedBridge.log(TAG + " setWebViewClient wrap error: " + t);
+                            }
+                        }
+                    });
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + " hook setWebViewClient fail: " + t);
+        }
+        try {
+            XposedHelpers.findAndHookMethod(WebViewClient.class, "onPageFinished", WebView.class, String.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            try {
+                                WebView view = (WebView) param.args[0];
+                                if (view != null) {
+                                    view.evaluateJavascript(js, null);
+                                }
+                            } catch (Throwable t) {
+                                XposedBridge.log(TAG + " default-client inject error: " + t);
+                            }
+                        }
+                    });
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + " hook WebViewClient.onPageFinished fail: " + t);
+        }
+    }
+
+    /** 包装 WebViewClient：加载完成后注入翻译脚本。 */
+    private static class ZhWebViewClient extends WebViewClient {
+        private final WebViewClient base;
+        private final String js;
+
+        ZhWebViewClient(WebViewClient base, String js) {
+            this.base = base;
+            this.js = js;
+        }
+
+        @Override
+        public void onPageCommitVisible(WebView view, String url) {
+            try {
+                if (base != null) {
+                    base.onPageCommitVisible(view, url);
+                }
+            } catch (Throwable t) {
+            }
+            inject(view);
+        }
+
+        @Override
+        public void onPageFinished(WebView view, String url) {
+            try {
+                if (base != null) {
+                    base.onPageFinished(view, url);
+                }
+            } catch (Throwable t) {
+            }
+            inject(view);
+        }
+
+        private void inject(WebView view) {
+            try {
+                if (view != null && js != null) {
+                    view.evaluateJavascript(js, null);
+                }
+            } catch (Throwable t) {
+                XposedBridge.log(TAG + " webview inject error: " + t);
+            }
+        }
+    }
+
+    /** 读取打包进 assets 的 web_inject.js（含合并字典的 DOM 翻译脚本）。 */
+    private static String loadWebInjectJs() {
+        try {
+            InputStream is = MainHook.class.getClassLoader().getResourceAsStream("assets/web_inject.js");
+            if (is == null) {
+                return null;
+            }
+            ByteArrayOutputStream bos = new ByteArrayOutputStream();
+            byte[] buf = new byte[16384];
+            int n;
+            while ((n = is.read(buf)) > 0) {
+                bos.write(buf, 0, n);
+            }
+            is.close();
+            return new String(bos.toByteArray(), "UTF-8");
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + " load web_inject.js fail: " + t);
+            return null;
+        }
     }
 }
