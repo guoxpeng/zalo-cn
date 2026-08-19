@@ -1,0 +1,14 @@
+# 构建产物
+*.apk
+build/build_work/
+build/build_out*.txt
+
+# 中间数据
+data/src_map.json
+
+# IDE
+.idea/
+*.iml
+build/*.keystore
+build/*.log
+zalozh_hanhua.apk
