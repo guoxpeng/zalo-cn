@@ -16,7 +16,7 @@
             android:value="true" />
         <meta-data
             android:name="xposeddescription"
-            android:value="Zalo 界面汉化：将 Zalo 英文/越南语界面翻译为简体中文（纯 UI 字符串替换，不改网络与账号数据）。实测版本 26.08.01（26.8.1）" />
+            android:value="Zalo 界面汉化：将 Zalo 英文/越南语界面翻译为简体中文（纯 UI 字符串替换，不改网络与账号数据）" />
         <meta-data
             android:name="xposedminversion"
             android:value="82" />
