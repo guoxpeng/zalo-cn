@@ -12,3 +12,4 @@ data/src_map.json
 build/*.keystore
 build/*.log
 zalozh_hanhua.apk
+*.idsig
