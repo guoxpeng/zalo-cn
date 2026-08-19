@@ -260,7 +260,7 @@ public class MainHook implements IXposedHookLoadPackage {
         // 钱包 Activity/Card 等 H5（WebView）页面：Chromium 渲染，hook 完全够不着，
         // 改为页面加载完成后注入 JS，按字典精确替换 DOM 文本节点（含动态内容）。
         try {
-            hookWebView();
+            hookWebView(lpparam);
             XposedBridge.log(TAG + " WebView hook installed");
         } catch (Throwable t) {
             XposedBridge.log(TAG + " WebView hook fail: " + t);
@@ -539,11 +539,15 @@ public class MainHook implements IXposedHookLoadPackage {
     /**
      * WebView H5 页面汉化：
      * 1) hook setWebViewClient，把应用的 client 包装成 ZhWebViewClient，
-     *    onPageFinished/onPageCommitVisible 时注入翻译脚本；
-     * 2) 兜底 hook WebViewClient.onPageFinished 基类方法（应用用默认 client 时也能命中）。
+     *    onPageFinished/onPageCommitVisible 时注入翻译脚本（覆盖普通页面）；
+     * 2) 兜底 hook WebViewClient.onPageFinished 基类方法（应用用默认 client 时也能命中）；
+     * 3) 关键：Zalo 钱包 H5（Activity/Card）走小程序容器 WebBaseView + ZWebView，
+     *    从不调用 setWebViewClient，页面完成回调是自定义的 H7(String url)。
+     *    hook WebBaseView.H7，反射找 ZWebView 字段注入（26.08.x 字段名 f40181j1，
+     *    按类型匹配不依赖名字）。
      * 注入脚本按字典精确替换文本节点，MutationObserver 覆盖动态内容。
      */
-    private static void hookWebView() {
+    private static void hookWebView(XC_LoadPackage.LoadPackageParam lpparam) {
         final String js = loadWebInjectJs();
         if (js == null) {
             XposedBridge.log(TAG + " web_inject.js not found, WebView translation disabled");
@@ -587,6 +591,62 @@ public class MainHook implements IXposedHookLoadPackage {
         } catch (Throwable t) {
             XposedBridge.log(TAG + " hook WebViewClient.onPageFinished fail: " + t);
         }
+        // Zalo 小程序/钱包 H5 容器：WebBaseView.H7(url) 是它的页面完成回调（
+        // MPWebView 覆写时第一行调 super.H7(str)，hook 基类方法即可命中）。
+        try {
+            Class<?> wbv = Class.forName("com.zing.zalo.ui.zviews.WebBaseView", false, lpparam.classLoader);
+            XposedHelpers.findAndHookMethod(wbv, "H7", String.class, new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) {
+                    try {
+                        WebView wv = findZWebView(param.thisObject);
+                        if (wv == null) {
+                            return;
+                        }
+                        wv.evaluateJavascript(js, null);
+                        // SPA 异步渲染兜底：延迟再补一次
+                        wv.postDelayed(new Runnable() {
+                            @Override
+                            public void run() {
+                                try {
+                                    wv.evaluateJavascript(js, null);
+                                } catch (Throwable t) {
+                                }
+                            }
+                        }, 1500L);
+                    } catch (Throwable t) {
+                        XposedBridge.log(TAG + " H7 inject error: " + t);
+                    }
+                }
+            });
+            XposedBridge.log(TAG + " WebBaseView.H7 hook installed");
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + " WebBaseView.H7 hook fail: " + t);
+        }
+    }
+
+    /** 反射遍历对象字段，找第一个 WebView 类型字段（Zalo 的 ZWebView）。 */
+    private static WebView findZWebView(Object obj) {
+        try {
+            Class<?> c = obj.getClass();
+            while (c != null && c != Object.class) {
+                for (java.lang.reflect.Field f : c.getDeclaredFields()) {
+                    try {
+                        if (WebView.class.isAssignableFrom(f.getType())) {
+                            f.setAccessible(true);
+                            Object v = f.get(obj);
+                            if (v instanceof WebView) {
+                                return (WebView) v;
+                            }
+                        }
+                    } catch (Throwable t) {
+                    }
+                }
+                c = c.getSuperclass();
+            }
+        } catch (Throwable t) {
+        }
+        return null;
     }
 
     /** 包装 WebViewClient：加载完成后注入翻译脚本。 */
