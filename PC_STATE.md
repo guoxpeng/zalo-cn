@@ -34,7 +34,7 @@
 | 词库覆盖 | 字典 **6279/6279 全汉化**（0 保留）；内嵌 `{en,vi}` 对象 vi 侧 243 组全部就位 |
 | 原版备份 | `zalopc/backup/app.asar.orig-26.8.20`（SHA1 与官方 update 元数据一致，纯净） |
 | 翻译资产 | `trans_cache.json`（4457 条 MT 缓存）、`zh_dict.json`、`zh_text.json`、`overrides.json` |
-| 远端 | `guoxpeng/zalo-cn` 分支 **`pc-zh`**（orphan 独立历史，main 未动） |
+| 远端 | `guoxpeng/zalo-cn` 分支 **`pc-zh`**（orphan 独立历史，main 未动；本目录即独立 git 仓库，改动后 `git push origin pc-zh:pc-zh` 即可更新） |
 
 ---
 
@@ -43,7 +43,7 @@
 ```
 zalopc/
 ├── PC_STATE.md            本文件（PC 支线唯一记忆源）
-├── README.md              面向使用者的说明（分支上的是其扩展版）
+├── README.md              面向使用者的说明（即分支上的 README）
 ├── backup/                官方原版 app.asar 备份（勿上传，173MB）
 ├── extract/               官方 app.asar 解包原文（勿上传，274MB）
 ├── build_app/             打补丁后的完整文件树（勿上传，274MB；03 重新生成）
