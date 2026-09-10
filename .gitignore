@@ -1,0 +1,18 @@
+# 本地生成 / 大文件，不入库
+extract/
+build_app/
+backup/
+work/dist/
+work/__pycache__/
+work/bing/node_modules/
+work/_bing_in.json
+work/_bing_out.json
+work/_zh_dict.before.json
+work/_zh_text.before.json
+work/patched_files.json
+work/pack_out.json
+work/run.out
+work/bing_run.out
+work/mm_run*.out
+work/translate.log
+raw/missing_sample.json
