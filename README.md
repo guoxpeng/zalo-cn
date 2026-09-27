@@ -7,14 +7,15 @@
 
 - 启动即为简体中文界面（默认语言槽位已换成中文）；
 - 设置 → 语言里可在 **中文 / English** 之间随时切换，互不影响；
-- 词库 **6279 条全部汉化**（含登录页、设置、聊天、群组、云盘等），另覆盖 4 个打包文件
-  与 preload 脚本里 243 组内嵌双语文案；
+- 词库 **6309 条全部汉化**（含登录页、设置、聊天、群组、云盘等），另覆盖 4 个打包文件
+  与 preload 脚本里 1238 组内嵌双语文案；
+- zCloud 推广弹窗强制走本地中文，不受服务端远端配置覆盖（`05_force_promo_zh.py`）；
 - 原生模块、登录凭证、聊天数据一概不碰（打包时自动校验 65 个原生文件字节级一致）。
 
 ## 适配版本
 
-实测 **Zalo PC 26.8.20**（安装目录 `…\Programs\Zalo\Zalo-26.8.20`）。
-其他 26.x 版本大概率可用：重新解包新版的 `app.asar`，按下面四步重跑即可
+实测 **Zalo PC 26.9.10**（安装目录 `…\Programs\Zalo\Zalo-26.9.10`）。
+其他 26.x 版本大概率可用：重新解包新版的 `app.asar`，按下面步骤重跑即可
 （词库文件名带哈希，脚本会按 `lang-en.*` / `lang-vi.*` 前缀自动探测）。
 
 ## 使用（重新生成汉化包）
@@ -24,7 +25,7 @@
 ```bash
 # 0) 准备：从官方安装目录解包 app.asar 到 extract/，
 #    并把 pc-dist/lazy/lang-en.*.js 与 lang-vi.*.js 两个文件拷到 raw/
-npx --yes @electron/asar extract "…\Zalo-26.8.20\resources\app.asar" ../extract
+npx --yes @electron/asar extract "…\Zalo-26.9.10\resources\app.asar" ../extract
 
 # 1) 解析词库与内嵌双语对象
 python work/01_parse.py
@@ -35,16 +36,20 @@ cd work && python 02_translate.py   # 默认 Google gtx；额度受限：ZALOPC_
 # 3) 生成打了补丁的完整文件树 build_app/
 python 03_apply.py
 
-# 4) 重打包 + 校验（产出 dist/app_zh.asar；原生文件必须 65/65 字节级一致）
-ZALOPC_INSTALL="C:/Users/laogu/AppData/Local/Programs/Zalo/Zalo-26.8.20/resources" python 04_pack.py
+# 3.5) 强制 zCloud 推广弹窗走本地中文（去掉服务端远端覆盖）
+python 05_force_promo_zh.py
+
+# 4) 重打包 + 校验（产出 dist_v2/app_zh.asar；原生文件必须 65/65 字节级一致）
+ZALOPC_INSTALL="C:/Users/laogu/AppData/Local/Programs/Zalo/Zalo-26.9.10/resources" python 04_pack.py
 ```
 
-安装：关闭 Zalo → 备份 `resources\app.asar` → 用 `work/dist/app_zh.asar` 覆盖 → 重新打开 Zalo。
+安装：关闭 Zalo → 备份 `resources\app.asar` → 用 `work/dist_v2/app_zh.asar` 覆盖 → 重新打开 Zalo。
 
 **回退**：把备份的原版 `app.asar` 复制回 `resources\` 即可，恢复如初。
 
 > 如果新版 Zalo 的语言包文件名变了，把 `work/03_apply.py` 顶部的 `CHUNK_FILE`
 > 和 `INLINE_FILES` 里的哈希文件名换成新版实际文件名即可（01 会打印探测到的文件名）。
+> `05_force_promo_zh.py` 同样按 4 个内联文件的哈希名定位，文件名变了需同步更新其常量。
 
 ## 手工修正词条
 

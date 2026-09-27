@@ -21,16 +21,16 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 EXTRACT = os.path.join(HERE, "..", "extract")
 BUILD = os.path.join(HERE, "..", "build_app")
 
-CHUNK_FILE = "pc-dist/lazy/lang-vi.88db564c02d731a9af93.js"
+CHUNK_FILE = "pc-dist/lazy/lang-vi.ce75c195d25d095c29dd.js"
 LANG_VI_SRC = os.path.join(HERE, "lang_vi.json")
 
 # files known to embed inline bilingual {en,vi} objects (from 01_parse)
 INLINE_FILES = [
-    "pc-dist/sync-v2-sub-worker.96f2410660e9f7b98dfd.js",
-    "pc-dist/search-worker.96f2410660e9f7b98dfd.js",
-    "pc-dist/lazy/default-login-main-startup-shared-worker-znotification.c328b26bacf4d868a59a.js",
-    "pc-dist/compact-app-pc.96f2410660e9f7b98dfd.js",
-    "pc-dist/lazy/main-startup.d6040e7ac34cd3cdca4b.js",
+    "pc-dist/sync-v2-sub-worker.bee53f6b7719d6a93320.js",
+    "pc-dist/search-worker.bee53f6b7719d6a93320.js",
+    "pc-dist/lazy/default-login-main-startup-shared-worker-znotification.cfb8c4aa40daa0a87751.js",
+    "pc-dist/compact-app-pc.bee53f6b7719d6a93320.js",
+    "pc-dist/lazy/main-startup.28a1f5591d9764019633.js",
     "main-dist/preload-sqlite.js",
 ]
 

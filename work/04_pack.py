@@ -12,10 +12,10 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="repla
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BUILD = os.path.join(HERE, "..", "build_app")
-DIST = os.path.join(HERE, "dist")
+DIST = os.path.join(HERE, "dist_v2")
 # Original install location; override with ZALOPC_INSTALL env var for other versions/machines
 ZALO_RES = os.environ.get("ZALOPC_INSTALL",
-                          r"C:/Users/laogu/AppData/Local/Programs/Zalo/Zalo-26.8.20/resources")
+                          r"C:/Users/laogu/AppData/Local/Programs/Zalo/Zalo-26.9.10/resources")
 ORIG_ASAR = os.path.join(ZALO_RES, "app.asar")
 ORIG_UNPACKED = os.path.join(ZALO_RES, "app.asar.unpacked")
 

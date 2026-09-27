@@ -3,6 +3,11 @@ extract/
 build_app/
 backup/
 work/dist/
+work/dist_new/
+work/dist_v2/
+work/_probe*.py
+work/zalo_*.png
+work/zalo_*.jpg
 work/__pycache__/
 work/bing/node_modules/
 work/_bing_in.json
