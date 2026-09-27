@@ -14,9 +14,10 @@
 
 ## 适配版本
 
-实测 **Zalo PC 26.9.10**（安装目录 `…\Programs\Zalo\Zalo-26.9.10`）。
-其他 26.x 版本大概率可用：重新解包新版的 `app.asar`，按下面步骤重跑即可
-（词库文件名带哈希，脚本会按 `lang-en.*` / `lang-vi.*` 前缀自动探测）。
+- **支持版本：Zalo PC 26.9.10**（本次实测版本，安装目录 `…\Programs\Zalo\Zalo-26.9.10`）。
+- **历史支持：26.8.20**（首次汉化验证版本）。
+- 其他 26.x 版本大概率可用：重新解包新版的 `app.asar`，按下面步骤重跑即可
+  （词库文件名带哈希，脚本会按 `lang-en.*` / `lang-vi.*` 前缀自动探测；`05` 脚本的内联文件哈希名需同步更新）。
 
 ## 使用（重新生成汉化包）
 
@@ -61,20 +62,20 @@ ZALOPC_INSTALL="C:/Users/laogu/AppData/Local/Programs/Zalo/Zalo-26.9.10/resource
 ```
 ├── README.md / PC_STATE.md   使用说明 / 支线交接文档（接手必读）
 ├── work/                     四步流水线脚本 + 全部翻译数据（缓存可复用）
-│   ├── 01_parse.py … 04_pack.py
+│   ├── 01_parse.py … 05_force_promo_zh.py
 │   ├── seed/src_map_compact.json   安卓版精校词库（种子翻译）
 │   ├── trans_cache.json / zh_dict.json / zh_text.json
 │   ├── overrides.json        人工修正词条
 │   └── bing/                 MyMemory/Google 额度受限时的备用翻译引擎
-├── raw/                      官方语言包 chunk 原件（26.8.20）
-├── extract/  build_app/  backup/  work/dist/   本地生成/备份，不入库（见 .gitignore）
+├── raw/                      官方语言包 chunk 原件（26.9.10）
+├── extract/  build_app/  backup/  work/dist_v2/   本地生成/备份，不入库（见 .gitignore）
 ```
 
 ## 已知限制
 
 - 服务器下发的动态文案（个别系统弹窗）不在本地词库，无法静态汉化；
 - 语言菜单里「中文」旁的图标仍是越南国旗（改图标要动渲染代码，为了安全底线不做）；
-- Zalo 自动更新会覆盖 `app.asar`，更新后需重跑上面四步（翻译缓存可复用，几分钟搞定）。
+- Zalo 自动更新会覆盖 `app.asar`，更新后需按上面步骤重跑（翻译缓存可复用，几分钟搞定）。
 
 ## 安全说明
 
