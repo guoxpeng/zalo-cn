@@ -18,7 +18,7 @@ pc端汉化，进项目仓库https://github.com/guoxpeng/zalo-cn 中，在分支
 
 ## 支持版本
 
-- 实测 **Zalo 26.08.02（26.8.2）** 及 26.08.01（26.8.1），Android 真机 + 模拟器验证，运行稳定无异常
+- 实测 **Zalo 26.10.01（26.10.1）**，Android 真机验证，运行稳定无异常
 - hook 的是系统层方法，不依赖具体版本号，26.x 新老版本大概率通用
 - 系统要求：Android 8.1+，需 Root + LSPosed / Vector
 
