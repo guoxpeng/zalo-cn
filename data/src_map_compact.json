@@ -9510,7 +9510,12 @@
     "Mini App phổ biến": "热门小程序",
     "Phổ biến": "热门",
     "zStyle – Stand out on Zalo": "zStyle – 在 Zalo 上彰显个性",
-    "Background and music library on Zalo": "Zalo 背景与音乐库"
+    "Background and music library on Zalo": "Zalo 背景与音乐库",
+    "Show \"Seen\" status": "显示\"已读\"状态",
+    "Search all services": "搜索所有服务",
+    "Type OA, Mini App name": "输入 OA、小程序名称",
+    "Scan all QR codes": "扫描所有二维码",
+    "QR money transfer": "QR 转账"
   },
   "vi": {
     "Tin nhắn": "消息",
@@ -18872,6 +18877,12 @@
     "Khám phá theo danh mục": "按分类探索",
     "Hôm nay thế nào?": "你今天过得怎么样？",
     "Chia sẻ suy nghĩ của bạn": "分享你的想法",
-    "Bảng tin": "动态"
+    "Bảng tin": "动态",
+    "tra hoá đơn": "缴账单",
+    "nạp điện thoại": "手机充值",
+    "tìm việc": "找工作",
+    "võ lâm truyền kỳ": "武林传奇",
+    "trợ lý kiki": "Kiki 助手",
+    "bảo hiểm online": "在线保险"
   }
 }
