@@ -9515,7 +9515,13 @@
     "Search all services": "搜索所有服务",
     "Type OA, Mini App name": "输入 OA、小程序名称",
     "Scan all QR codes": "扫描所有二维码",
-    "QR money transfer": "QR 转账"
+    "QR money transfer": "QR 转账",
+    "Card & Ticket": "卡券",
+    "Membership card": "会员卡",
+    "Scan this to add me on Zalo": "扫码在 Zalo 上加我",
+    "Update QR code": "更新二维码",
+    "My Documents": "我的文档",
+    "Activity": "活动"
   },
   "vi": {
     "Tin nhắn": "消息",
