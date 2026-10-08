@@ -2,6 +2,7 @@
 
 > 把 Zalo 界面从越南语 / 英文翻译成简体中文的 Xposed 模块。
 > 在越南打拼的中国朋友，装上它，界面就顺眼多了。
+pc端汉化，进项目仓库https://github.com/guoxpeng/zalo-cn 中，在分支中切换查阅。
 
 ## 功能
 
