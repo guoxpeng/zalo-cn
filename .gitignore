@@ -1,15 +1,19 @@
 # 构建产物
 *.apk
+*.idsig
 build/build_work/
 build/build_out*.txt
 
-# 中间数据
+# 中间数据（由 data/ 下的精简表生成，不入库）
 data/src_map.json
 
 # IDE
 .idea/
 *.iml
-build/*.keystore
 build/*.log
 zalozh_hanhua.apk
-*.idsig
+
+# 注意：build/zalocn.keystore 特意入库。
+# 这是本项目的固定签名证书（口令已公开在构建脚本中），
+# 目的是让 CI 打出的 APK 与历史版本签名一致、可直接覆盖升级。
+# 仅用于本项目自签名分发，请勿复用到其他项目。

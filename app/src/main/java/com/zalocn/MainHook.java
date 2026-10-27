@@ -38,12 +38,44 @@ public class MainHook implements IXposedHookLoadPackage {
     /** 资源名 -> 中文 */
     private static volatile Map<String, String> zhByName;
 
+    /**
+     * 当前是否为「越南语模式」。
+     *
+     * Zalo 自带语言切换：切到越南语时，界面应当保持越南语原文，不能汉化。
+     * 该标志只允许由 Zalo 自身资源（id >= 0x7f000000）的读取来更新，
+     * 避免系统资源（framework）把标志刷掉。
+     *
+     * 初值为 true（先按「越南语、不翻译」处理）：进程刚启动时 Resources 配置
+     * 可能还是 Zalo 默认的越南语，若此时就放行翻译，越南语模式下会漏出中文。
+     * 一旦读到英文配置（非 vi），立刻置 false，此后正常汉化。
+     */
+    static volatile boolean viMode = true;
+
+    /**
+     * 资源层已经确认「确实翻出了中文」。
+     *
+     * 用于兜底：极少数机型上 app 资源读取的时序不稳，viMode 可能短暂为 true，
+     * 此时只要资源层已经成功翻译过（说明当前就是中文模式），文本层就照常翻译。
+     */
+    static volatile boolean zhModeProven = false;
+
+    /** 越南语模式日志只打一次，避免刷屏。 */
+    static volatile boolean viModeLogged;
+
     /** 硬编码界面文本（不走资源系统）原文 -> 中文 */
     private static final Map<String, String> HARDCODED = new HashMap<String, String>();
     static {
         HARDCODED.put("zBusiness", "企业工具");
         HARDCODED.put("zCloud", "云端存储");
         HARDCODED.put("My Documents", "我的文档");
+        // 个人主页顶部卡片（Zalo 里是写死在代码中的，不在资源表）
+        HARDCODED.put("My photos", "我的照片");
+        HARDCODED.put("My Photos", "我的照片");
+        HARDCODED.put("My videos", "我的视频");
+        HARDCODED.put("My Videos", "我的视频");
+        HARDCODED.put("Most liked", "最多点赞");
+        HARDCODED.put("Most Liked", "最多点赞");
+        HARDCODED.put("Story archive", "瞬间归档");
         HARDCODED.put("QR Wallet", "QR 钱包");
         HARDCODED.put("Expand connections with professional account", "连接专业账号，拓展人脉");
         HARDCODED.put("Data storage space on the cloud", "云端数据存储空间");
@@ -457,8 +489,20 @@ public class MainHook implements IXposedHookLoadPackage {
         }
     }
 
-    /** 按英文/越南语原文查找中文（HARDCODED 优先，再查全量源码映射）。 */
+    /**
+     * 按英文/越南语原文查找中文（HARDCODED 优先，再查全量源码映射）。
+     *
+     * 语言闸门：越南语模式下返回 null，界面保持越南语原文。
+     */
     private static String lookupSource(String s) {
+        if (viMode && !zhModeProven) {
+            return null;
+        }
+        return lookupSourceInner(s);
+    }
+
+    /** 实际的文本映射实现。 */
+    private static String lookupSourceInner(String s) {
         if (s == null || s.length() == 0) {
             return null;
         }
@@ -485,12 +529,59 @@ public class MainHook implements IXposedHookLoadPackage {
     }
 
     /**
+     * 判断当前 Resources 的配置语言是否为越南语。
+     *
+     * 依据：Zalo 的「语言」设置会改写 Resources 的 Configuration（getLocales()），
+     * 切到越南语时首选项语言为 "vi"；切到英文时为 "en"。
+     */
+    static boolean isViMode(Resources res) {
+        boolean vi = false;
+        if (res != null) {
+            try {
+                android.content.res.Configuration cfg = res.getConfiguration();
+                android.os.LocaleList locales = cfg.getLocales();
+                if (locales != null && !locales.isEmpty()) {
+                    String lang = locales.get(0).getLanguage();
+                    vi = "vi".equals(lang);
+                }
+            } catch (Throwable ignored) {
+                vi = false;
+            }
+        }
+        return vi;
+    }
+
+    /**
      * 根据资源 ID 返回中文翻译；无翻译或非 Zalo 资源时返回 null（保持原样）。
+     *
+     * 语言闸门：越南语模式下直接返回 null，界面保持越南语原文。
      */
     static String translate(int id, Resources res) {
-        if (id < 0x7f000000 || res == null) {
+        if (id < 0x7f000000) {
             return null; // framework 资源不处理
         }
+        if (res == null) {
+            return null;
+        }
+        // 只有 Zalo 自身资源才允许更新语言标志
+        boolean vi = isViMode(res);
+        viMode = vi;
+        if (vi && !viModeLogged) {
+            viModeLogged = true;
+            XposedBridge.log(TAG + " vi mode detected -> translation disabled");
+        }
+        if (vi) {
+            return null;
+        }
+        String zh = translateInner(id, res);
+        if (zh != null) {
+            zhModeProven = true;
+        }
+        return zh;
+    }
+
+    /** 实际的资源翻译实现。 */
+    static String translateInner(int id, Resources res) {
         if (zhByName == null) {
             loadTranslations();
         }
