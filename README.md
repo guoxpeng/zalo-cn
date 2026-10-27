@@ -119,6 +119,29 @@ javac  →  d8  →  aapt2 link  →  拼装 dex+assets  →  zip  →  zipalign
 git tag v2.6.1 && git push origin v2.6.1
 ```
 
+### 两个仓库的分工与发布约定
+
+本模块同时发布在两个仓库，**Release 约定不一样**：
+
+| 仓库 | 用途 | Release tag | 附件名 | 发布方式 |
+|---|---|---|---|---|
+| `guoxpeng/zalo-cn` | 源码主仓、面向用户 | `v2.6.1` | `zalocn_hanhua.apk` | CI 打 tag 自动发 |
+| `Xposed-Modules-Repo/com.zalocn` | LSPosed 模块列表收录 | `17-2.6.1`（`versionCode-versionName`） | `Zalo-cn_v2.6.1.apk` | **该仓库未启用 Actions，需手动上传** |
+
+> 第二个仓库的 tag 必须是 `<versionCode>-<versionName>`，模块管理器靠它比对版本、
+> 判断要不要提示更新。附件名也保持 `Zalo-cn_v<versionName>.apk` 的历史命名。
+
+一次性把两个仓库都发好：
+
+```bash
+bash build/publish.sh
+# 或复用已构建好的 APK：
+SKIP_BUILD=1 bash build/publish.sh
+```
+
+脚本会自动读 `AndroidManifest.xml` 的版本号、按上面的约定创建（或复用）Release、
+删掉同名旧附件再上传，令牌默认读 `~/.workbuddy-ai/secrets/github_token`。
+
 ---
 
 ## 项目结构
@@ -135,6 +158,7 @@ git tag v2.6.1 && git push origin v2.6.1
 │   └── src_map_compact.json          # 英文原文 -> 中文（10200 条）
 ├── build/
 │   ├── build_module.sh               # 一键构建脚本（跨平台）
+│   ├── publish.sh                    # 一键发布到两个仓库的 Release
 │   ├── classes_dex_empty.dex         # 空壳主 dex
 │   └── zalocn.keystore               # 固定签名证书（见下方说明）
 ├── .github/workflows/build.yml       # CI：自动打包 + Release
