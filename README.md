@@ -131,6 +131,10 @@ git tag v2.6.1 && git push origin v2.6.1
 > 第二个仓库的 tag 必须是 `<versionCode>-<versionName>`，模块管理器靠它比对版本、
 > 判断要不要提示更新。附件名也保持 `Zalo-cn_v<versionName>.apk` 的历史命名。
 
+> **注意**：第二个仓库的 `README.md` 是**独立的镜像说明**（首屏引导用户回源码仓库，
+> 并说明「同步后才更新版本」），**不要**用本仓库的 README 覆盖它。
+> 同步源码时记得排除 `README.md`。
+
 一次性把两个仓库都发好：
 
 ```bash
