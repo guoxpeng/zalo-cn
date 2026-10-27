@@ -44,7 +44,7 @@ Zalo 自带「语言」设置（Tiếng Việt / English）。模块的判断逻
 
 ## 支持版本
 
-- 实测 **Zalo 26.10.01（26.10.1）**，Android 14 真机验证
+- 实测 **Zalo 26.10.02（26.10.2）**，Android 14 真机验证通过
 - hook 的是系统层方法，不依赖具体 Zalo 版本号，26.x 新老版本大概率通用
 - 系统要求：**Android 8.1+**，需 Root + **LSPosed / Vector**
 
