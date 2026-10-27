@@ -13,6 +13,11 @@
 #      —— 面向普通用户，CI 打 tag 时自动发布
 #   2) Xposed-Modules-Repo/com.zalocn  tag = <versionCode>-<versionName>  附件名 Zalo-cn_v<versionName>.apk
 #      —— 面向 LSPosed 模块列表，仓库未启用 Actions，必须手动上传
+#
+# 同步源码到第二个仓库时，务必排除 README.md：
+#   那里的 README 是独立的「镜像说明」（引导用户回源码仓库 + 说明同步后才更新版本），
+#   被本仓库 README 覆盖就丢了。
+#   参考：rsync -a --delete --exclude .git --exclude README.md ... zalo-cn/ com.zalocn/
 # ============================================================================
 set -euo pipefail
 
