@@ -1,0 +1,75 @@
+name: Build APK
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: 构建汉化模块 APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 安装 JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: 安装 Android SDK 组件
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platforms;android-34 build-tools;35.0.0'
+
+      - name: 解析版本号
+        id: ver
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            NAME="${GITHUB_REF_NAME#v}"
+            CODE=$(grep -oP 'android:versionCode="\K[0-9]+' app/src/main/AndroidManifest.xml)
+          else
+            NAME="2.6.1-dev"
+            CODE=$(grep -oP 'android:versionCode="\K[0-9]+' app/src/main/AndroidManifest.xml)
+          fi
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "code=$CODE" >> "$GITHUB_OUTPUT"
+          echo "版本: $NAME ($CODE)"
+
+      - name: 构建
+        env:
+          ANDROID_SDK_ROOT: ${{ env.ANDROID_SDK_ROOT }}
+          VERSION_NAME: ${{ steps.ver.outputs.name }}
+          VERSION_CODE: ${{ steps.ver.outputs.code }}
+        run: |
+          chmod +x build/build_module.sh
+          bash build/build_module.sh
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: zalocn-${{ steps.ver.outputs.name }}
+          path: zalocn_hanhua.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: 发布 Release（仅 tag）
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: zalocn_hanhua.apk
+          name: Zalo 汉化 ${{ steps.ver.outputs.name }}
+          body_path: RELEASE_NOTES_v${{ steps.ver.outputs.name }}.md
+          fail_on_unmatched_files: true
+        continue-on-error: true
