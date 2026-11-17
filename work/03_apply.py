@@ -21,18 +21,26 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 EXTRACT = os.path.join(HERE, "..", "extract")
 BUILD = os.path.join(HERE, "..", "build_app")
 
-CHUNK_FILE = "pc-dist/lazy/lang-vi.ce75c195d25d095c29dd.js"
+def detect_chunk(pattern):
+    """Locate a bundled file by glob pattern, hash suffix independent.
+    Returns a path relative to EXTRACT with forward slashes."""
+    hits = sorted(glob.glob(os.path.join(EXTRACT, pattern)))
+    if not hits:
+        print("ERROR: no file matching %s in extract/ (re-run asar extract)" % pattern)
+        sys.exit(1)
+    return os.path.relpath(hits[0], EXTRACT).replace("\\", "/")
+
+# lang-vi webpack chunk: hash suffix changes every Zalo release -> auto-detect
+CHUNK_FILE = detect_chunk("pc-dist/lazy/lang-vi.*.js")
 LANG_VI_SRC = os.path.join(HERE, "lang_vi.json")
 
-# files known to embed inline bilingual {en,vi} objects (from 01_parse)
-INLINE_FILES = [
-    "pc-dist/sync-v2-sub-worker.bee53f6b7719d6a93320.js",
-    "pc-dist/search-worker.bee53f6b7719d6a93320.js",
-    "pc-dist/lazy/default-login-main-startup-shared-worker-znotification.cfb8c4aa40daa0a87751.js",
-    "pc-dist/compact-app-pc.bee53f6b7719d6a93320.js",
-    "pc-dist/lazy/main-startup.28a1f5591d9764019633.js",
-    "main-dist/preload-sqlite.js",
-]
+# Files embedding inline bilingual {en,vi} objects: read the list from inline.json
+# produced by 01_parse (which re-scans the current extract). Hash-name independent.
+_inline_map_path = os.path.join(HERE, "inline.json")
+INLINE_FILES = list(json.load(open(_inline_map_path, encoding="utf-8")).keys()) if \
+    os.path.exists(_inline_map_path) else []
+print("lang-vi chunk:", CHUNK_FILE)
+print("inline files from inline.json:", len(INLINE_FILES))
 
 LABEL_SRC = 'text:"Tiếng Việt"'
 LABEL_DST = 'text:"中文"'

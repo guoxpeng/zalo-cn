@@ -14,10 +14,10 @@
 
 ## 适配版本
 
-- **支持版本：Zalo PC 26.9.10**（本次实测版本，安装目录 `…\Programs\Zalo\Zalo-26.9.10`）。
-- **历史支持：26.8.20**（首次汉化验证版本）。
-- 其他 26.x 版本大概率可用：重新解包新版的 `app.asar`，按下面步骤重跑即可
-  （词库文件名带哈希，脚本会按 `lang-en.*` / `lang-vi.*` 前缀自动探测；`05` 脚本的内联文件哈希名需同步更新）。
+- **当前支持：Zalo PC 26.11.12**（2026-11-17 实测，6475 词全汉化，正常运行）。
+- 历史支持：26.10.20、26.9.10、26.8.20。
+- **其他 26.x 版本：装好开机守护后无需手动适配**——`auto_patch.py` 会自动解包新版、
+  按前缀/内容特征探测所有带哈希的文件，重打并替换（见下方「自动更新」）。
 
 ## 使用（重新生成汉化包）
 
@@ -46,11 +46,31 @@ ZALOPC_INSTALL="C:/Users/laogu/AppData/Local/Programs/Zalo/Zalo-26.9.10/resource
 
 安装：关闭 Zalo → 备份 `resources\app.asar` → 用 `work/dist_v2/app_zh.asar` 覆盖 → 重新打开 Zalo。
 
-**回退**：把备份的原版 `app.asar` 复制回 `resources\` 即可，恢复如初。
+**回退**：把备份的原版 `app.asar`（`resources\app.asar.bak.<版本>_<时间>`）复制回 `resources\app.asar` 即可。
 
-> 如果新版 Zalo 的语言包文件名变了，把 `work/03_apply.py` 顶部的 `CHUNK_FILE`
-> 和 `INLINE_FILES` 里的哈希文件名换成新版实际文件名即可（01 会打印探测到的文件名）。
-> `05_force_promo_zh.py` 同样按 4 个内联文件的哈希名定位，文件名变了需同步更新其常量。
+## 自动更新（推荐，已启用）
+
+Zalo 会自动更新并新建版本目录，导致旧汉化包失效。已配置开机守护全自动处理：
+
+- `work/auto_patch.py`：检测最新版本是否已汉化（读 asar 里的 `text:"中文"`/`text:"Tiếng Việt"` 标记），
+  未汉化则自动重打全流程、等 Zalo 退出后备份替换、同步 SHA1、重启；
+- `watch_zh.vbs`：每 10 分钟静默检查一次（隐藏窗口）；
+- 开机自启项：`%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\Zalo汉化守护.vbs`。
+
+日常无需任何操作。需要时手动排查：
+
+```bash
+cd work
+python auto_patch.py --check   # 查看版本/汉化状态/Zalo 是否运行
+python auto_patch.py           # 立即检测并按需重打安装
+python auto_patch.py --force   # 强制重打
+```
+
+日志见 `work/auto_patch.log`，状态见 `work/auto_patch_state.json`。
+脚本已去除所有写死的哈希文件名与安装路径，新版 Zalo 无需改代码。
+
+> 迁移电脑 / 改了项目路径：编辑 Startup 里的 `Zalo汉化守护.vbs`，把里面的
+> `target = "D:\project\zalo\zalopc\watch_zh.vbs"` 改成新路径即可。
 
 ## 手工修正词条
 
@@ -75,7 +95,7 @@ ZALOPC_INSTALL="C:/Users/laogu/AppData/Local/Programs/Zalo/Zalo-26.9.10/resource
 
 - 服务器下发的动态文案（个别系统弹窗）不在本地词库，无法静态汉化；
 - 语言菜单里「中文」旁的图标仍是越南国旗（改图标要动渲染代码，为了安全底线不做）；
-- Zalo 自动更新会覆盖 `app.asar`，更新后需按上面步骤重跑（翻译缓存可复用，几分钟搞定）。
+- Zalo 自动更新会覆盖 `app.asar`——已由开机守护自动重打解决（见上节），无需手动重跑。
 
 ## 安全说明
 

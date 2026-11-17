@@ -6,18 +6,30 @@ kept unpacked (those living in resources/app.asar.unpacked), then verify:
 
 Outputs under zalopc/work/dist/app_zh.asar (+ app_zh.asar.unpacked/).
 """
-import io, sys, os, re, json, subprocess, shutil, hashlib
+import io, sys, os, re, glob, json, subprocess, shutil, hashlib
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BUILD = os.path.join(HERE, "..", "build_app")
 DIST = os.path.join(HERE, "dist_v2")
-# Original install location; override with ZALOPC_INSTALL env var for other versions/machines
-ZALO_RES = os.environ.get("ZALOPC_INSTALL",
-                          r"C:/Users/laogu/AppData/Local/Programs/Zalo/Zalo-26.9.10/resources")
+# Original install location. Auto-detect the newest installed Zalo version;
+# override explicitly with ZALOPC_INSTALL for other machines/versions.
+def detect_zhalo_resources():
+    root = r"C:/Users/laogu/AppData/Local/Programs/Zalo"
+    cands = [d for d in glob.glob(os.path.join(root, "Zalo-*"))
+             if os.path.isdir(os.path.join(d, "resources", "app.asar.unpacked"))]
+    def vkey(d):
+        m = re.search(r"Zalo-(\d+)\.(\d+)\.(\d+)", os.path.basename(d))
+        return tuple(int(x) for x in m.groups()) if m else (0, 0, 0)
+    if not cands:
+        return os.path.join(root, "Zalo-26.9.10", "resources")
+    return os.path.join(sorted(cands, key=vkey)[-1], "resources")
+
+ZALO_RES = os.environ.get("ZALOPC_INSTALL") or detect_zhalo_resources()
 ORIG_ASAR = os.path.join(ZALO_RES, "app.asar")
 ORIG_UNPACKED = os.path.join(ZALO_RES, "app.asar.unpacked")
+print("reference install resources:", ZALO_RES)
 
 def rel_list(root):
     out = []

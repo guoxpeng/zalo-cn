@@ -1,6 +1,8 @@
 # 本地生成 / 大文件，不入库
 extract/
+extract_*/
 build_app/
+build_app_*/
 backup/
 work/dist/
 work/dist_new/
@@ -21,3 +23,9 @@ work/bing_run.out
 work/mm_run*.out
 work/translate.log
 raw/missing_sample.json
+raw_*/
+work/auto_patch.log
+work/auto_patch_state.json
+work/watchdog.log
+work/_zalo_*.txt
+work/_ze.txt
