@@ -233,7 +233,46 @@ func findPython() string {
 			return cand
 		}
 	}
-	return "python"
+	return ""
+}
+
+// checkPrereqs 前置检查：缺 Python 或 Node.js/npx 时，打印下载链接并退出，
+// 让新使用者先装好依赖再重跑本 exe。
+// 返回 python 可执行文件路径（一定存在）。
+func checkPrereqs() string {
+	pythonExe := findPython()
+	if pythonExe == "" {
+		fmt.Println()
+		fmt.Println("缺少 Python，无法安装。请先安装 Python：")
+		fmt.Println("  下载地址：https://www.python.org/downloads/")
+		fmt.Println("  安装时务必勾选 \"Add Python to PATH\"（把 Python 加进系统路径），")
+		fmt.Println("  装完后重新双击本 exe。")
+		fmt.Println()
+		fmt.Println("按回车退出。")
+		fmt.Scanln()
+		os.Exit(1)
+	}
+	if _, err := exec.LookPath("node"); err != nil {
+		fmt.Println()
+		fmt.Println("缺少 Node.js，无法安装。请先安装 Node.js（LTS 长期支持版）：")
+		fmt.Println("  下载地址：https://nodejs.org/")
+		fmt.Println("  装完后重新双击本 exe。")
+		fmt.Println()
+		fmt.Println("按回车退出。")
+		fmt.Scanln()
+		os.Exit(1)
+	}
+	if _, err := exec.LookPath("npx"); err != nil {
+		fmt.Println()
+		fmt.Println("缺少 npx（Node.js 自带），无法安装。请重装 Node.js（LTS 长期支持版）：")
+		fmt.Println("  下载地址：https://nodejs.org/")
+		fmt.Println("  装完后重新双击本 exe。")
+		fmt.Println()
+		fmt.Println("按回车退出。")
+		fmt.Scanln()
+		os.Exit(1)
+	}
+	return pythonExe
 }
 
 // extractAll 把内嵌的 files/ 整棵树写进 workDir（覆盖同名文件）。
@@ -296,6 +335,11 @@ func main() {
 	fmt.Println("Zalo PC 汉化+翻译一键安装器")
 	fmt.Println("==============================")
 
+	// 0. 前置检查：缺 Python 或 Node.js/npx 时提示下载链接并退出
+	pythonExe := checkPrereqs()
+	fmt.Println("依赖检查通过：Python 与 Node.js 已安装。")
+	fmt.Println()
+
 	// 1. 找 Zalo 安装目录（找不到就让使用者自己指定）
 	zaloRoot := findZaloRoot()
 	if zaloRoot != "" {
@@ -319,7 +363,6 @@ func main() {
 	fmt.Println("  写入完成。")
 
 	// 4. 跑 auto_patch.py（未汉化走全流程；已汉化只补翻译注入）
-	pythonExe := findPython()
 	fmt.Printf("[4/5] 正在安装（%s auto_patch.py）…\n", pythonExe)
 	fmt.Println("------------------------------")
 	cmd := exec.Command(pythonExe, "auto_patch.py")

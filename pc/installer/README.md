@@ -14,9 +14,11 @@
 
 ## 需要目标电脑上已有的东西
 
-- Python（`python` 命令在 PATH 里）
-- Node.js + npx（`auto_patch.py` 用 `npx --yes @electron/asar` 解包/打包 asar）
-- Zalo 已安装
+安装器启动时会先检查，缺了就提示下载链接、退出，等装好再重跑：
+
+- **Python**：缺了提示去 https://www.python.org/downloads/ 下载，安装时务必勾选 "Add Python to PATH"（把 Python 加进系统路径）
+- **Node.js（LTS 长期支持版）**：缺了提示去 https://nodejs.org/ 下载（自带 npx）
+- **Zalo 已安装**
 
 ## 构建（开发者）
 
