@@ -4,14 +4,14 @@
 #
 # 用法：
 #   bash build/publish.sh              # 构建并发布
-#   SKIP_BUILD=1 bash build/publish.sh # 用现成的 zalocn_hanhua.apk 发布
+#   SKIP_BUILD=1 bash build/publish.sh # 用现成的 Zalocn-E.apk 发布
 #
 # 令牌：默认读 ~/.workbuddy-ai/secrets/github_token，可用 GITHUB_TOKEN 覆盖
 #
 # 两个仓库的 Release 约定不同：
-#   1) guoxpeng/zalo-cn            tag = v<versionName>        附件名 zalocn_hanhua.apk
+#   1) guoxpeng/zalo-cn            tag = v<versionName>        附件名 Zalocn-E.apk
 #      —— 面向普通用户，CI 打 tag 时自动发布
-#   2) Xposed-Modules-Repo/com.zalocn  tag = <versionCode>-<versionName>  附件名 Zalo-cn_v<versionName>.apk
+#   2) Xposed-Modules-Repo/com.zalocn  tag = <versionCode>-<versionName>  附件名 Zalocn-E_v<versionName>.apk
 #      —— 面向 LSPosed 模块列表，仓库未启用 Actions，必须手动上传
 #
 # 同步源码到第二个仓库时，务必排除 README.md：
@@ -35,7 +35,7 @@ UP="https://uploads.github.com"
 USER_REPO="guoxpeng/zalo-cn"
 XPOSED_REPO="Xposed-Modules-Repo/com.zalocn"
 
-APK="$ROOT/zalocn_hanhua.apk"
+APK="$ROOT/Zalocn-E.apk"
 
 # ---------------------------------------------------------------- 1. 构建
 if [ "${SKIP_BUILD:-0}" != "1" ]; then
@@ -96,8 +96,8 @@ for a in json.load(sys.stdin):
     | python3 -c "import sys,json;d=json.load(sys.stdin);print('   已上传:',d.get('name'),d.get('size'),d.get('state'))"
 }
 
-publish "$USER_REPO"    "v$VNAME"            "Zalo 汉化 $VNAME"  "zalocn_hanhua.apk"
-publish "$XPOSED_REPO"  "${VCODE}-${VNAME}"  "v$VNAME"           "Zalo-cn_v${VNAME}.apk"
+publish "$USER_REPO"    "v$VNAME"            "Zalo中文增强模块 $VNAME"  "Zalocn-E.apk"
+publish "$XPOSED_REPO"  "${VCODE}-${VNAME}"  "v$VNAME"           "Zalocn-E_v${VNAME}.apk"
 
 echo "== 发布完成 =="
 echo "   https://github.com/$USER_REPO/releases/tag/v$VNAME"

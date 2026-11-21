@@ -40,17 +40,34 @@ jobs:
             NAME="${GITHUB_REF_NAME#v}"
             CODE=$(grep -oP 'android:versionCode="\K[0-9]+' app/src/main/AndroidManifest.xml)
           else
-            NAME="2.6.1-dev"
+            NAME="3.0.0-dev"
             CODE=$(grep -oP 'android:versionCode="\K[0-9]+' app/src/main/AndroidManifest.xml)
           fi
           echo "name=$NAME" >> "$GITHUB_OUTPUT"
           echo "code=$CODE" >> "$GITHUB_OUTPUT"
           echo "版本: $NAME ($CODE)"
 
+      - name: 还原签名证书（GitHub Secrets）
+        # 2026-11-21 轮换后：旧 keystore 已公开作废，CI 不再用仓库内证书。
+        # Secrets：KEYSTORE_BASE64（keystore 的 base64）、KEYSTORE_PASSWORD、
+        # KEY_PASSWORD、KEY_ALIAS。缺 secrets 时构建会在签名步明确报错。
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::error::缺少 KEYSTORE_BASE64 secret，无法签名。请按 README 配好四个签名 Secrets 再跑。"
+            exit 1
+          fi
+          mkdir -p "$HOME/.config/zalocn"
+          echo "$KEYSTORE_BASE64" | base64 -d > "$HOME/.config/zalocn/zalocn-release.keystore"
+
       - name: 构建
         env:
           VERSION_NAME: ${{ steps.ver.outputs.name }}
           VERSION_CODE: ${{ steps.ver.outputs.code }}
+          ZALOZH_KS_PASS: ${{ secrets.KEYSTORE_PASSWORD }}
+          ZALOZH_KEY_PASS: ${{ secrets.KEY_PASSWORD }}
+          ZALOZH_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
         run: |
           chmod +x build/build_module.sh
           bash build/build_module.sh
@@ -58,8 +75,8 @@ jobs:
       - name: 上传产物
         uses: actions/upload-artifact@v4
         with:
-          name: zalocn-${{ steps.ver.outputs.name }}
-          path: zalocn_hanhua.apk
+          name: Zalocn-E-${{ steps.ver.outputs.name }}
+          path: Zalocn-E.apk
           if-no-files-found: error
           retention-days: 30
 
@@ -67,7 +84,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: zalocn_hanhua.apk
+          files: Zalocn-E.apk
           name: Zalo 汉化 ${{ steps.ver.outputs.name }}
           body_path: RELEASE_NOTES_v${{ steps.ver.outputs.name }}.md
           fail_on_unmatched_files: true

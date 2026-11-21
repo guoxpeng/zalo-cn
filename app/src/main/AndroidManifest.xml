@@ -1,13 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.zalocn"
-    android:versionCode="17"
-    android:versionName="2.6.1">
+    android:versionCode="33"
+    android:versionName="3.0.0">
 
     <uses-sdk android:minSdkVersion="27" android:targetSdkVersion="34" />
 
+    <!-- 测试按钮在模块自己的设置页进程里直接调 API，必须声明联网权限。
+         （hook 在 Zalo 进程里跑，用的是 Zalo 自己的联网权限，所以之前“译”按钮
+         能翻、测试按钮却报“配置有误”——设置页进程根本没联网权限。） -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <application
-        android:label="Zalo 汉化"
+        android:label="Zalo中文增强模块"
+        android:icon="@mipmap/ic_launcher"
         android:allowBackup="false"
         android:extractNativeLibs="false">
 
@@ -16,12 +22,28 @@
             android:value="true" />
         <meta-data
             android:name="xposeddescription"
-            android:value="Zalo 界面汉化：将 Zalo 英文/越南语界面翻译为简体中文（纯 UI 字符串替换，不改网络与账号数据）" />
+            android:value="Zalo 界面汉化 + 消息实时翻译：将 Zalo 英文/越南语界面翻译为简体中文（纯 UI 字符串替换，不改网络与账号数据）；消息翻译走用户自填的大模型 API" />
         <meta-data
             android:name="xposedminversion"
             android:value="82" />
+        <!-- LSPosed API 93+ 新版 XSharedPreferences：声明后 LSPosed 把模块 prefs
+             重定向到共享位置，仅作用域内的 Zalo 进程可读，普通 App 读不到。
+             旧硬编码路径在安卓 16 上会被 SELinux 拦，故必须声明此项。 -->
+        <meta-data
+            android:name="xposedsharedprefs"
+            android:value="true" />
         <meta-data
             android:name="xposedscope"
             android:value="com.zing.zalo" />
+
+        <activity
+            android:name="com.zalocn.TranslateSettingsActivity"
+            android:label="Zalo中文增强模块设置"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
     </application>
 </manifest>

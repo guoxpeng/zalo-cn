@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # ============================================================================
-# Zalo 汉化模块（com.zalocn）一键构建脚本 —— 跨平台版
+# Zalo中文增强模块（com.zalocn）一键构建脚本 —— 跨平台版
 #
 # 用法：
 #   bash build/build_module.sh
-#   VERSION_CODE=18 VERSION_NAME=2.7 bash build/build_module.sh
+#   VERSION_CODE=33 VERSION_NAME=3.0.0 bash build/build_module.sh
 #
 # 依赖：
 #   - JDK 8+（推荐 17 / 21）
@@ -14,10 +14,16 @@
 #
 # 环境变量：
 #   ANDROID_SDK_ROOT / ANDROID_HOME   SDK 路径（不设则自动探测常见位置）
-#   ZALOZH_KEYSTORE                   签名证书路径（默认 build/zalocn.keystore）
-#   ZALOZH_KS_PASS / ZALOZH_KEY_PASS  证书口令（默认 zalocn123）
+#   ZALOZH_KEYSTORE                   签名证书路径（默认 ~/.config/zalocn/zalocn-release.keystore）
+#   ZALOZH_KS_PASS / ZALOZH_KEY_PASS  证书口令（必填，无默认值；旧默认口令已作废）
 #   ZALOZH_KEY_ALIAS                  别名（默认 zalocn）
-#   OUT                               产物路径（默认 <repo>/zalocn_hanhua.apk）
+#   OUT                               产物路径（默认 <repo>/Zalocn-E.apk）
+#
+# 签名安全（2026-11-21 轮换后）：旧 keystore（build/zalocn.keystore，旧默认口令）
+# 已公开作废，从仓库与历史中清除。新 keystore 只存放在仓库外
+# （~/.config/zalocn/zalocn-release.keystore），口令不进仓库、不进脚本；
+# CI 从 GitHub Secrets 读（KEYSTORE_BASE64 / KEYSTORE_PASSWORD / KEY_PASSWORD）。
+# 新旧签名不兼容：已装旧签名版的用户必须卸载重装一次。
 # ============================================================================
 set -euo pipefail
 
@@ -27,10 +33,10 @@ cd "$ROOT"
 SRC_JAVA="app/src/main/java"
 MANIFEST_SRC="app/src/main/AndroidManifest.xml"
 WORK="build/build_work"
-OUT="${OUT:-$ROOT/zalocn_hanhua.apk}"
+OUT="${OUT:-$ROOT/Zalocn-E.apk}"
 
-VERSION_CODE="${VERSION_CODE:-17}"
-VERSION_NAME="${VERSION_NAME:-2.6.1}"
+VERSION_CODE="${VERSION_CODE:-33}"
+VERSION_NAME="${VERSION_NAME:-3.0.0}"
 
 # ---------------------------------------------------------------- 工具定位
 tool() { # tool <build-tools-dir> <name>
@@ -121,12 +127,23 @@ echo "== 3. d8 -> classes2.dex"
   $(find "$WORK/classes/com" -name "*.class")
 mv "$WORK/classes.dex" "$WORK/classes2.dex"
 
-# ---------------------------------------------------------------- 4. aapt2 link
-echo "== 4. aapt2 link"
-"$AAPT2" link -o "$WORK/base.apk" \
-  --manifest "$MANIFEST" \
-  -I "$PLATFORM" \
-  --min-sdk-version 27 --target-sdk-version 34
+# ---------------------------------------------------------------- 4. aapt2 编译资源 + link
+echo "== 4. aapt2 compile res + link"
+RES_DIR="app/src/main/res"
+COMPILED_RES="$WORK/compiled_res.zip"
+if [ -d "$RES_DIR" ]; then
+  "$AAPT2" compile --dir "$RES_DIR" -o "$COMPILED_RES"
+  "$AAPT2" link -o "$WORK/base.apk" \
+    --manifest "$MANIFEST" \
+    -I "$PLATFORM" \
+    "$COMPILED_RES" \
+    --min-sdk-version 27 --target-sdk-version 34
+else
+  "$AAPT2" link -o "$WORK/base.apk" \
+    --manifest "$MANIFEST" \
+    -I "$PLATFORM" \
+    --min-sdk-version 27 --target-sdk-version 34
+fi
 
 # ---------------------------------------------------------------- 5. 组装
 echo "== 5. 组装 dex + assets"
@@ -162,17 +179,22 @@ PYEOF
 echo "== 7. zipalign + apksigner"
 "$ZIPALIGN" -p -f 4 "$WORK/unsigned.apk" "$WORK/aligned.apk"
 
-KEYSTORE="${ZALOZH_KEYSTORE:-$ROOT/build/zalocn.keystore}"
-KS_PASS="${ZALOZH_KS_PASS:-zalocn123}"
-KEY_PASS="${ZALOZH_KEY_PASS:-zalocn123}"
+KEYSTORE="${ZALOZH_KEYSTORE:-$HOME/.config/zalocn/zalocn-release.keystore}"
+KS_PASS="${ZALOZH_KS_PASS:-}"
+KEY_PASS="${ZALOZH_KEY_PASS:-}"
 KEY_ALIAS="${ZALOZH_KEY_ALIAS:-zalocn}"
 
 if [ ! -f "$KEYSTORE" ]; then
-  echo "   keystore 不存在，自动生成 $KEYSTORE"
-  keytool -genkeypair -v -keystore "$KEYSTORE" -alias "$KEY_ALIAS" \
-    -keyalg RSA -keysize 2048 -validity 3650 \
-    -storepass "$KS_PASS" -keypass "$KEY_PASS" \
-    -dname "CN=zalocn-zh, O=zalocn-zh, C=CN" >/dev/null 2>&1
+  echo "!! 找不到签名证书 $KEYSTORE" >&2
+  echo "   生成方法：keytool -genkeypair -keystore ~/.config/zalocn/zalocn-release.keystore \\" >&2
+  echo "     -alias zalocn -keyalg RSA -keysize 4096 -validity 10000" >&2
+  echo "   口令用 ZALOZH_KS_PASS / ZALOZH_KEY_PASS 环境变量传入，绝不写进仓库。" >&2
+  exit 1
+fi
+if [ -z "$KS_PASS" ] || [ -z "$KEY_PASS" ]; then
+  echo "!! 未设置证书口令：请设 ZALOZH_KS_PASS 与 ZALOZH_KEY_PASS 环境变量" >&2
+  echo "   （无默认值；旧默认口令已作废，不要把口令写进脚本或仓库。）" >&2
+  exit 1
 fi
 
 "$APKSIGNER" sign --ks "$KEYSTORE" --ks-key-alias "$KEY_ALIAS" \
