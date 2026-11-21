@@ -51,6 +51,7 @@ public class TranslateSettingsActivity extends Activity {
     private Spinner spTargetLang;
     private Spinner spProfile;
     private Button btnNewProfile;
+    private Button btnRenameProfile;
     private Button btnDeleteProfile;
     private EditText etCustomPrompt;
     private CheckBox cbInputKeepOriginal;
@@ -104,6 +105,14 @@ public class TranslateSettingsActivity extends Activity {
                 showNewProfileDialog();
             }
         });
+        btnRenameProfile = new Button(this);
+        btnRenameProfile.setText("改名");
+        btnRenameProfile.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                showRenameProfileDialog();
+            }
+        });
         btnDeleteProfile = new Button(this);
         btnDeleteProfile.setText("删除当前模板");
         btnDeleteProfile.setOnClickListener(new View.OnClickListener() {
@@ -115,7 +124,11 @@ public class TranslateSettingsActivity extends Activity {
         LinearLayout.LayoutParams half = new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
         half.rightMargin = dp(8);
+        LinearLayout.LayoutParams half2 = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        half2.rightMargin = dp(8);
         rowProfileBtns.addView(btnNewProfile, half);
+        rowProfileBtns.addView(btnRenameProfile, half2);
         rowProfileBtns.addView(btnDeleteProfile, new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         root.addView(rowProfileBtns, new LinearLayout.LayoutParams(
@@ -133,7 +146,7 @@ public class TranslateSettingsActivity extends Activity {
         etCustomPrompt.setHint("可选。地名对照每行一对，如：胡志明市=Thành phố Hồ Chí Minh；也可写要求，如：地名按越南官方译名，不要直译");
         root.addView(etCustomPrompt, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        addHint(root, "只对大模型模板生效；免费引擎（Google/Bing/MyMemory）不用提示词。");
+        addHint(root, "所有大模型模板共用一个提示词；免费引擎（Google/Bing/MyMemory）不用提示词。");
 
         addTitle(root, "译文语言");
         addHint(root, "把收到的消息翻译成");
@@ -266,21 +279,19 @@ public class TranslateSettingsActivity extends Activity {
                 && !"ai".equals(profiles.get(activeProfileIdx).engine);
     }
 
-    /** 免费引擎时禁用 API 输入框（不需要填），大模型模板时启用。 */
+    /** 免费引擎时禁用 API 输入框（不需要填），大模型模板时启用。提示词全局共用，始终可填。 */
     private void refreshEngineFields() {
         boolean free = activeProfileIsFree();
         etBaseUrl.setEnabled(!free);
         etApiKey.setEnabled(!free);
         etModel.setEnabled(!free);
-        etCustomPrompt.setEnabled(!free);
     }
 
-    /** 把一个模板的 API 数据填进输入框。 */
+    /** 把一个模板的 API 数据填进输入框（提示词不跟模板走，切换时不动）。 */
     private void fillApiFields(ModelProfile p) {
         etBaseUrl.setText(p.baseUrl);
         etApiKey.setText(p.apiKey);
         etModel.setText(p.model);
-        etCustomPrompt.setText(p.prompt);
     }
 
     /** 切换模板：先把当前界面上的值存回旧模板，再换新模板并立即生效。 */
@@ -293,7 +304,7 @@ public class TranslateSettingsActivity extends Activity {
         ModelProfile.saveActiveName(this, profiles.get(pos).name);
         fillApiFields(profiles.get(pos));
         refreshEngineFields();
-        refreshDeleteButton();
+        refreshProfileButtons();
         saveQuietly(); // 新模板的值写进扁平配置，Zalo 侧立即按新引擎翻
         Toast.makeText(this, "已切换到“" + profiles.get(pos).name + "”",
                 Toast.LENGTH_SHORT).show();
@@ -314,11 +325,12 @@ public class TranslateSettingsActivity extends Activity {
         updatingProfileSpinner = false;
     }
 
-    /** 只有用户新建的模板能删；系统预设隐藏删除按钮。 */
-    private void refreshDeleteButton() {
+    /** 只有用户新建的模板能删、能改名；系统预设隐藏这两个按钮。 */
+    private void refreshProfileButtons() {
         boolean custom = profiles != null && activeProfileIdx >= 0
                 && activeProfileIdx < profiles.size()
                 && !profiles.get(activeProfileIdx).builtin;
+        btnRenameProfile.setVisibility(custom ? View.VISIBLE : View.GONE);
         btnDeleteProfile.setVisibility(custom ? View.VISIBLE : View.GONE);
     }
 
@@ -352,17 +364,60 @@ public class TranslateSettingsActivity extends Activity {
         ModelProfile p = new ModelProfile(name,
                 etBaseUrl.getText().toString().trim(),
                 etApiKey.getText().toString().trim(),
-                etModel.getText().toString().trim(),
-                etCustomPrompt.getText().toString().trim(), "ai", false);
+                etModel.getText().toString().trim(), "ai", false);
         profiles.add(p);
         ModelProfile.save(this, profiles);
         activeProfileIdx = profiles.size() - 1;
         ModelProfile.saveActiveName(this, name);
         refreshProfileSpinner();
-        refreshDeleteButton();
+        refreshProfileButtons();
         refreshEngineFields();
         saveQuietly();
         Toast.makeText(this, "模板“" + name + "”已保存", Toast.LENGTH_SHORT).show();
+    }
+
+    /** 改名：只有自定义模板能改名；系统预设改不了。 */
+    private void showRenameProfileDialog() {
+        if (profiles == null || profiles.isEmpty()) {
+            return;
+        }
+        final ModelProfile p = profiles.get(activeProfileIdx);
+        if (p.builtin) {
+            Toast.makeText(this, "系统预设不能改名", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        final EditText etName = new EditText(this);
+        etName.setText(p.name);
+        etName.setSelection(p.name.length());
+        new AlertDialog.Builder(this)
+                .setTitle("改模板名字")
+                .setView(etName)
+                .setPositiveButton("保存", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface d, int which) {
+                        renameCurrentProfile(etName.getText().toString().trim());
+                    }
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    private void renameCurrentProfile(String name) {
+        if (name.length() == 0) {
+            Toast.makeText(this, "先填个名字", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        ModelProfile p = profiles.get(activeProfileIdx);
+        if (!name.equals(p.name) && ModelProfile.indexOfName(profiles, name) >= 0) {
+            Toast.makeText(this, "这个名字已经有了", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        p.name = name;
+        ModelProfile.save(this, profiles);
+        ModelProfile.saveActiveName(this, name);
+        refreshProfileSpinner();
+        refreshProfileButtons();
+        Toast.makeText(this, "已改名“" + name + "”", Toast.LENGTH_SHORT).show();
     }
 
     private void deleteCurrentProfile() {
@@ -380,7 +435,7 @@ public class TranslateSettingsActivity extends Activity {
         ModelProfile.saveActiveName(this, profiles.get(0).name);
         fillApiFields(profiles.get(0));
         refreshProfileSpinner();
-        refreshDeleteButton();
+        refreshProfileButtons();
         refreshEngineFields();
         saveQuietly();
         Toast.makeText(this, "已删除，切回“" + profiles.get(0).name + "”",
@@ -410,10 +465,9 @@ public class TranslateSettingsActivity extends Activity {
                 activeProfileIdx = match;
                 ModelProfile p = profiles.get(match);
                 p.apiKey = cfg.apiKey;
-                p.prompt = cfg.customPrompt;
             } else {
                 profiles.add(new ModelProfile("我的配置", cfg.baseUrl, cfg.apiKey,
-                        cfg.model, cfg.customPrompt, "ai", false));
+                        cfg.model, "ai", false));
                 activeProfileIdx = profiles.size() - 1;
             }
             ModelProfile.save(this, profiles);
@@ -426,6 +480,8 @@ public class TranslateSettingsActivity extends Activity {
             }
         }
         fillApiFields(profiles.get(activeProfileIdx));
+        // 提示词全局共用：从扁平配置读，切换模板时不动。
+        etCustomPrompt.setText(cfg.customPrompt);
         etHistBaseUrl.setText(cfg.histBaseUrl);
         etHistApiKey.setText(cfg.histApiKey);
         etHistModel.setText(cfg.histModel);
@@ -437,7 +493,7 @@ public class TranslateSettingsActivity extends Activity {
         cfg.reminderToken = TranslateConfig.ensureReminderToken(this);
         lastCfg = cfg;
         refreshProfileSpinner();
-        refreshDeleteButton();
+        refreshProfileButtons();
         refreshEngineFields();
         refreshStatus(cfg);
         saveQuietly(); // 把当前模板的值同步写进扁平配置，保证 hook 侧读到的是当前模板
@@ -577,7 +633,6 @@ public class TranslateSettingsActivity extends Activity {
             p.baseUrl = cfg.baseUrl;
             p.apiKey = cfg.apiKey;
             p.model = cfg.model;
-            p.prompt = cfg.customPrompt;
             ModelProfile.save(this, profiles);
         }
         cfg.saveForSettings(this);

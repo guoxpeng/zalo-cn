@@ -12,10 +12,11 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 大模型模板：每个模板独立保存一套 API 数据（地址/密钥/模型/提示词）。
+ * 大模型模板：每个模板独立保存一套 API 数据（地址/密钥/模型）。
  * 下拉框显示的模板就是当前生效的大模型；切换下拉框即切换生效模型，
- * 不用重新填写——各模板的数据存在同一 prefs 文件的 modelProfiles JSON 里，
- * hook 侧（Zalo 进程）只读扁平的 baseUrl/apiKey/model/customPrompt，
+ * 不用重新填写——各模板的数据存在同一 prefs 文件的 modelProfiles JSON 里。
+ * 提示词是全局的，所有大模型模板共用一个，存在扁平键 customPrompt 里，
+ * 不跟模板走；hook 侧（Zalo 进程）只读扁平的 baseUrl/apiKey/model/customPrompt，
  * 设置页每次切换/编辑后都把当前模板的值同步写回扁平键。
  */
 public class ModelProfile {
@@ -23,31 +24,29 @@ public class ModelProfile {
     public String baseUrl;
     public String apiKey;
     public String model;
-    public String prompt;
     /**
-     * 引擎："ai" = 大模型 API（OpenAI 兼容，用上面四项）；
+     * 引擎："ai" = 大模型 API（OpenAI 兼容，用上面三项）；
      * "google" / "google2" / "bing" / "mymemory" = 免费网页翻译引擎
-     * （不用密钥，上面四项留空）。
+     * （不用密钥，上面三项留空）。
      */
     public String engine = "ai";
-    /** 系统预设不能删；用户新建的模板可以删。 */
+    /** 系统预设不能删、不能改名；用户新建的模板可以删、可以改名。 */
     public boolean builtin;
 
     public ModelProfile() {
     }
 
     public ModelProfile(String name, String baseUrl, String apiKey,
-                        String model, String prompt, boolean builtin) {
-        this(name, baseUrl, apiKey, model, prompt, "ai", builtin);
+                        String model, boolean builtin) {
+        this(name, baseUrl, apiKey, model, "ai", builtin);
     }
 
     public ModelProfile(String name, String baseUrl, String apiKey,
-                        String model, String prompt, String engine, boolean builtin) {
+                        String model, String engine, boolean builtin) {
         this.name = name;
         this.baseUrl = baseUrl;
         this.apiKey = apiKey;
         this.model = model;
-        this.prompt = prompt;
         this.engine = engine;
         this.builtin = builtin;
     }
@@ -56,20 +55,20 @@ public class ModelProfile {
     public static List<ModelProfile> defaults() {
         List<ModelProfile> out = new ArrayList<ModelProfile>();
         out.add(new ModelProfile("Google 翻译（免密钥，推荐）",
-                "", "", "", "", "google", true));
+                "", "", "", "google", true));
         out.add(new ModelProfile("Google 翻译·备用通道（免密钥）",
-                "", "", "", "", "google2", true));
+                "", "", "", "google2", true));
         out.add(new ModelProfile("Bing 翻译（免密钥）",
-                "", "", "", "", "bing", true));
+                "", "", "", "bing", true));
         out.add(new ModelProfile("MyMemory 翻译记忆库（免密钥）",
-                "", "", "", "", "mymemory", true));
+                "", "", "", "mymemory", true));
         out.add(new ModelProfile("bilibili 免密钥翻译",
                 "https://index-translate.bilibili.com/v1", "",
-                "Index-Translate-35B-A3B", "", "ai", true));
+                "Index-Translate-35B-A3B", "ai", true));
         out.add(new ModelProfile("OpenAI",
-                "https://api.openai.com/v1", "", "gpt-4o-mini", "", "ai", true));
+                "https://api.openai.com/v1", "", "gpt-4o-mini", "ai", true));
         out.add(new ModelProfile("DeepSeek",
-                "https://api.deepseek.com/v1", "", "deepseek-chat", "", "ai", true));
+                "https://api.deepseek.com/v1", "", "deepseek-chat", "ai", true));
         return out;
     }
 
@@ -92,7 +91,6 @@ public class ModelProfile {
                 p.baseUrl = o.optString("baseUrl", "");
                 p.apiKey = o.optString("apiKey", "");
                 p.model = o.optString("model", "");
-                p.prompt = o.optString("prompt", "");
                 p.engine = o.optString("engine", "ai");
                 p.builtin = o.optBoolean("builtin", false);
                 if (p.name.length() > 0) {
@@ -114,7 +112,6 @@ public class ModelProfile {
                 o.put("baseUrl", p.baseUrl);
                 o.put("apiKey", p.apiKey);
                 o.put("model", p.model);
-                o.put("prompt", p.prompt);
                 o.put("engine", p.engine);
                 o.put("builtin", p.builtin);
                 arr.put(o);
