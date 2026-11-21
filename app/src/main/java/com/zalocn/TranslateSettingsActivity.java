@@ -20,6 +20,8 @@ import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
+import android.widget.Spinner;
+import android.widget.ArrayAdapter;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -44,6 +46,7 @@ public class TranslateSettingsActivity extends Activity {
     private CheckBox cbAutoIncoming;
     private CheckBox cbAutoOutgoing;
     private CheckBox cbReviewBeforeSend;
+    private Spinner spTargetLang;
     private EditText etCustomPrompt;
     private CheckBox cbInputKeepOriginal;
     private TextView tvStatus;
@@ -75,9 +78,23 @@ public class TranslateSettingsActivity extends Activity {
         etModel = addField(root, "模型", "例如 gpt-4o-mini");
 
         cbEnabled = addCheck(root, "启用消息翻译");
-        cbAutoIncoming = addCheck(root, "收到越语消息，自动翻译成中文");
+        cbAutoIncoming = addCheck(root, "收到外语消息，自动翻译");
         cbAutoOutgoing = addCheck(root, "发出中文消息，自动翻成越语再发");
         cbReviewBeforeSend = addCheck(root, "发送前先检查译文（译文填回输入框，确认后点发送）");
+
+        addTitle(root, "接收翻译目标语言");
+        addHint(root, "收到的消息翻成哪种语言（默认中文）。新消息保存后立即按新语言翻；已显示的旧消息重进会话后按新语言重翻。");
+        spTargetLang = new Spinner(this);
+        String[] targetNames = new String[TranslateConfig.TARGET_LANGS.length];
+        for (int i = 0; i < targetNames.length; i++) {
+            targetNames[i] = TranslateConfig.TARGET_LANGS[i][1];
+        }
+        ArrayAdapter<String> targetAdapter = new ArrayAdapter<String>(
+                this, android.R.layout.simple_spinner_item, targetNames);
+        targetAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        spTargetLang.setAdapter(targetAdapter);
+        root.addView(spTargetLang, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         addTitle(root, "历史记录翻译（可选）");
         addHint(root, "接收/历史翻译用这里，输入框发送用上面的主配置。某一项空着就用上面对应的项，三项都空=完全用主配置。");
@@ -181,6 +198,18 @@ public class TranslateSettingsActivity extends Activity {
         return true;
     }
 
+    /** 目标语代码 -> 下拉框位置，找不到默认 0（中文）。 */
+    private static int indexOfTargetLang(String code) {
+        if (code != null) {
+            for (int i = 0; i < TranslateConfig.TARGET_LANGS.length; i++) {
+                if (TranslateConfig.TARGET_LANGS[i][0].equals(code)) {
+                    return i;
+                }
+            }
+        }
+        return 0;
+    }
+
     private void load() {
         TranslateConfig cfg = TranslateConfig.loadForSettings(this);
         etBaseUrl.setText(cfg.baseUrl);
@@ -193,6 +222,7 @@ public class TranslateSettingsActivity extends Activity {
         cbAutoIncoming.setChecked(cfg.autoIncoming);
         cbAutoOutgoing.setChecked(cfg.autoOutgoing);
         cbReviewBeforeSend.setChecked(cfg.reviewBeforeSend);
+        spTargetLang.setSelection(indexOfTargetLang(cfg.incomingTargetLang));
         etCustomPrompt.setText(cfg.customPrompt);
         cbInputKeepOriginal.setChecked(cfg.inputKeepOriginal);
         // 首次打开设置页即生成提醒校验 token（之后 ReminderReceiver 强制校验）。
@@ -216,6 +246,10 @@ public class TranslateSettingsActivity extends Activity {
         cfg.autoIncoming = cbAutoIncoming.isChecked();
         cfg.autoOutgoing = cbAutoOutgoing.isChecked();
         cfg.reviewBeforeSend = cbReviewBeforeSend.isChecked();
+        int targetPos = spTargetLang.getSelectedItemPosition();
+        if (targetPos >= 0 && targetPos < TranslateConfig.TARGET_LANGS.length) {
+            cfg.incomingTargetLang = TranslateConfig.TARGET_LANGS[targetPos][0];
+        }
         cfg.customPrompt = etCustomPrompt.getText().toString().trim();
         cfg.inputKeepOriginal = cbInputKeepOriginal.isChecked();
         if (cfg.reminderToken == null || cfg.reminderToken.length() == 0) {
@@ -236,7 +270,7 @@ public class TranslateSettingsActivity extends Activity {
             sb.append("状态：未填 API 地址或密钥，翻译功能暂不可用。");
         } else {
             sb.append("状态：已配置 ").append(cfg.model).append("，")
-              .append(cfg.autoIncoming ? "收到的越语自动翻；" : "收到的不自动翻；")
+              .append(cfg.autoIncoming ? "收到的自动翻成" + TranslateConfig.targetLangName(cfg.incomingTargetLang) + "；" : "收到的不自动翻；")
               .append(cfg.autoOutgoing ? "发出的中文自动翻成越语。" : "发出的不自动翻。");
         }
         // 通知权限：提醒通知由模块自身进程发，安卓 13+ 没权限到点不显示。

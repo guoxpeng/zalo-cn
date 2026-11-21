@@ -70,6 +70,28 @@ public class TranslateConfig {
     /** 输入框“译”按钮：同时保留中文原文（中文一行 + 越南语一行）。关 = 只填越南语译文。 */
     public boolean inputKeepOriginal = true;
 
+    /** 接收翻译的目标语言代码（面板“收到消息翻译成”），默认 "zh" 中文。 */
+    public String incomingTargetLang = "zh";
+
+    /** 接收翻译可选的目标语言：{代码, 显示名}。代码也是 LLM 提示词与 p7g/o7g 的键。 */
+    public static final String[][] TARGET_LANGS = {
+            {"zh", "中文"}, {"en", "英语"}, {"th", "泰语"}, {"lo", "老挝语"},
+            {"km", "高棉语"}, {"my", "缅甸语"}, {"ms", "马来语"}, {"id", "印尼语"},
+            {"ja", "日语"}, {"ko", "韩语"}, {"vi", "越南语"}
+    };
+
+    /** 语言代码 -> 显示名（LLM 提示词用），未知代码默认中文。 */
+    public static String targetLangName(String code) {
+        if (code != null) {
+            for (String[] pair : TARGET_LANGS) {
+                if (pair[0].equals(code)) {
+                    return pair[1];
+                }
+            }
+        }
+        return "中文";
+    }
+
     /** 历史记录翻译专用配置（空 = 沿用主配置，按项生效）。 */
     public String histBaseUrl = "";
     public String histApiKey = "";
@@ -121,6 +143,7 @@ public class TranslateConfig {
         c.reviewBeforeSend = src.reviewBeforeSend;
         c.customPrompt = src.customPrompt;
         c.inputKeepOriginal = src.inputKeepOriginal;
+        c.incomingTargetLang = src.incomingTargetLang;
         c.histBaseUrl = src.histBaseUrl;
         c.histApiKey = src.histApiKey;
         c.histModel = src.histModel;
@@ -207,6 +230,7 @@ public class TranslateConfig {
         cfg.reviewBeforeSend = !"false".equals(kv.get("reviewBeforeSend"));
         cfg.customPrompt = nonEmpty(kv.get("customPrompt"), "");
         cfg.inputKeepOriginal = !"false".equals(kv.get("inputKeepOriginal"));
+        cfg.incomingTargetLang = nonEmpty(kv.get("incomingTargetLang"), "zh");
         cfg.histBaseUrl = nonEmpty(kv.get("histBaseUrl"), "");
         cfg.histApiKey = nonEmpty(kv.get("histApiKey"), "");
         cfg.histModel = nonEmpty(kv.get("histModel"), "");
@@ -228,6 +252,7 @@ public class TranslateConfig {
             cfg.reviewBeforeSend = sp.getBoolean("reviewBeforeSend", true);
             cfg.customPrompt = nonEmpty(sp.getString("customPrompt", null), "");
             cfg.inputKeepOriginal = sp.getBoolean("inputKeepOriginal", true);
+            cfg.incomingTargetLang = nonEmpty(sp.getString("incomingTargetLang", null), "zh");
             cfg.histBaseUrl = nonEmpty(sp.getString("histBaseUrl", null), "");
             cfg.histApiKey = nonEmpty(sp.getString("histApiKey", null), "");
             cfg.histModel = nonEmpty(sp.getString("histModel", null), "");
@@ -292,6 +317,7 @@ public class TranslateConfig {
             ed.putBoolean("reviewBeforeSend", reviewBeforeSend);
             ed.putString("customPrompt", customPrompt);
             ed.putBoolean("inputKeepOriginal", inputKeepOriginal);
+            ed.putString("incomingTargetLang", incomingTargetLang);
             ed.putString("histBaseUrl", histBaseUrl);
             ed.putString("histApiKey", histApiKey);
             ed.putString("histModel", histModel);

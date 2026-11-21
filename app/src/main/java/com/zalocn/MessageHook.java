@@ -273,6 +273,9 @@ public class MessageHook {
         if (!cfg.enabled || !cfg.autoIncoming) {
             return;
         }
+        // 接收翻译的目标语（面板全局设置，默认中文）。
+        String target = cfg.incomingTargetLang != null && cfg.incomingTargetLang.length() > 0
+                ? cfg.incomingTargetLang : "zh";
         // 已有译文（原生或已注入）——直接跳过，也是重绑定的天然防循环闸。
         if (hasTranslation(vv3)) {
             return;
@@ -281,8 +284,13 @@ public class MessageHook {
         if (text == null || text.trim().length() < 2) {
             return;
         }
-        // 已是中文，不用翻。
-        if (containsHan(text)) {
+        // 已是目标语言，不用翻。目标=中文时沿用现成的汉字启发式；
+        // 其他目标语用 Zalo 自身的检测结果（vv3.z1()）。
+        if ("zh".equals(target)) {
+            if (containsHan(text)) {
+                return;
+            }
+        } else if (target.equals(detectedLang(vv3))) {
             return;
         }
         Object msgId = getField(vv3, "b");
@@ -327,9 +335,9 @@ public class MessageHook {
         }
         // 缓存命中：before-hook 阶段注入，绑定布局直接按译文算。
         if (st != null) {
-            String cached = st.getCached(text, "auto", "zh");
+            String cached = st.getCached(text, "auto", target);
             if (cached != null) {
-                injectTranslation(vv3, cached, detectedLang(vv3));
+                injectTranslation(vv3, cached, detectedLang(vv3), target);
                 return;
             }
         }
@@ -339,7 +347,7 @@ public class MessageHook {
         if (listScrolling) {
             return; // 滑动中只读缓存，不发新请求；停下后由滚动监听补翻
         }
-        enqueueTranslation(row, vv3, msgId, key, text, threadId, detectedLang(vv3), -1);
+        enqueueTranslation(row, vv3, msgId, key, text, threadId, detectedLang(vv3), -1, target);
         maybeCheckReminders(row);
     }
 
@@ -374,7 +382,8 @@ public class MessageHook {
      */
     private static boolean enqueueTranslation(final Object rowRef, final Object vv3Ref,
             final Object msgIdRef, final String keyRef, final String textRef,
-            final String threadRef, final String detected, final long gen) {
+            final String threadRef, final String detected, final long gen,
+            final String targetLang) {
         if (inFlight.size() >= MAX_IN_FLIGHT) {
             return false;
         }
@@ -390,9 +399,9 @@ public class MessageHook {
                     return;
                 }
                 TranslateConfig c2 = TranslateConfig.loadForHook().resolveForHistory();
-                String translated = LlmClient.translate(c2, textRef, "auto", "zh", context);
+                String translated = LlmClient.translate(c2, textRef, "auto", targetLang, context);
                 if (translated != null && store != null) {
-                    store.putCached(textRef, "auto", "zh", translated);
+                    store.putCached(textRef, "auto", targetLang, translated);
                     if (threadRef != null && store.getContactLang(threadRef) == null) {
                         // 只在没有记录时自动记为越语；手动设过的（中文/越语）不动，
                         // 否则对方偶尔发句越语就会把“不翻译”覆盖掉。
@@ -404,7 +413,7 @@ public class MessageHook {
                     @Override
                     public void run() {
                         try {
-                            applyTranslation(rowRef, vv3Ref, msgIdRef, result);
+                            applyTranslation(rowRef, vv3Ref, msgIdRef, result, targetLang);
                         } catch (Throwable t) {
                             XposedBridge.log(TAG + " applyTranslation error: " + t);
                         } finally {
@@ -475,6 +484,9 @@ public class MessageHook {
             if (!cfg.resolveForHistory().hasApi()) {
                 return;
             }
+            // 接收翻译的目标语（面板全局设置，默认中文）。
+            final String target = cfg.incomingTargetLang != null && cfg.incomingTargetLang.length() > 0
+                    ? cfg.incomingTargetLang : "zh";
             TranslateStore st = storeFor(rv);
             ViewGroup vg = (ViewGroup) rv;
             int n = vg.getChildCount();
@@ -491,7 +503,13 @@ public class MessageHook {
                     if (hasTranslation(info.vv3)) {
                         continue;
                     }
-                    if (containsHan(info.text)) {
+                    // 已是目标语言，不用翻（目标=中文时沿用汉字启发式，
+                    // 其他目标语用 Zalo 自身的检测结果）。
+                    if ("zh".equals(target)) {
+                        if (containsHan(info.text)) {
+                            continue;
+                        }
+                    } else if (target.equals(detectedLang(info.vv3))) {
                         continue;
                     }
                     if (st != null && st.isHidden(info.key)) {
@@ -504,11 +522,11 @@ public class MessageHook {
                         continue;
                     }
                     if (st != null) {
-                        String cached = st.getCached(info.text, "auto", "zh");
+                        String cached = st.getCached(info.text, "auto", target);
                         if (cached != null) {
                             // 缓存命中立刻显示（走与异步回包同一校验+重绑定）。
                             try {
-                                applyTranslation(child, info.vv3, info.msgId, cached);
+                                applyTranslation(child, info.vv3, info.msgId, cached, target);
                             } catch (Throwable t) {
                                 XposedBridge.log(TAG + " idle cache apply fail: " + t);
                             }
@@ -516,7 +534,7 @@ public class MessageHook {
                         }
                     }
                     enqueueTranslation(child, info.vv3, info.msgId, info.key,
-                            info.text, info.threadId, detectedLang(info.vv3), gen);
+                            info.text, info.threadId, detectedLang(info.vv3), gen, target);
                 } catch (Throwable t) {
                     XposedBridge.log(TAG + " idle row fail: " + t);
                 }
@@ -684,7 +702,8 @@ public class MessageHook {
     }
 
     /** 异步回包应用：先核对行当前消息仍是目标消息（防 RecyclerView 复用串位）。 */
-    private static void applyTranslation(Object row, Object vv3, Object msgId, String translated) throws Exception {
+    private static void applyTranslation(Object row, Object vv3, Object msgId, String translated,
+            String targetLang) throws Exception {
         if (row == null || translated == null) {
             return;
         }
@@ -701,7 +720,7 @@ public class MessageHook {
         if (hasTranslation(vv3)) {
             return;
         }
-        injectTranslation(vv3, translated, detectedLang(vv3));
+        injectTranslation(vv3, translated, detectedLang(vv3), targetLang);
         // 走一次完整重绑定，让 I2()/z2() 按新 o3 重算 n7/w7/e8。
         callMethod(row, "setMessage", vv3);
     }
@@ -734,12 +753,13 @@ public class MessageHook {
         setField(row, "r7", null);
     }
 
-    /** 注入译文到原生槽位 vv3.o3（p7g），不碰原文 vv3.f。 */
-    private static void injectTranslation(Object vv3, String translated, String detected) throws Exception {
+    /** 注入译文到原生槽位 vv3.o3（p7g），不碰原文 vv3.f。targetLang 是目标语代码（p7g.b 与 o7g 键）。 */
+    private static void injectTranslation(Object vv3, String translated, String detected,
+            String targetLang) throws Exception {
         HashMap<String, Object> map = new HashMap<String, Object>();
-        map.put("zh", ctorO7g.newInstance(translated, null));
+        map.put(targetLang, ctorO7g.newInstance(translated, null));
         Object p7g = ctorP7g.newInstance(
-                detected == null ? "vi" : detected, "zh", Boolean.TRUE, map);
+                detected == null ? "vi" : detected, targetLang, Boolean.TRUE, map);
         setField(vv3, "o3", p7g);
     }
 

@@ -59,14 +59,14 @@ public class LlmClient {
                 conn.setRequestProperty("Authorization", "Bearer " + cfg.apiKey);
             }
 
-            String toName = "zh".equals(toLang) ? "中文" : "越南语";
+            String toName = TranslateConfig.targetLangName(toLang);
             StringBuilder sys = new StringBuilder();
             if ("auto".equals(fromLang)) {
-                sys.append("你是一名中越双语翻译。自动识别用户给出的消息的语言，")
+                sys.append("你是一名翻译。自动识别用户给出的消息的语言，")
                    .append("翻译成").append(toName).append("。");
             } else {
-                String fromName = "vi".equals(fromLang) ? "越南语" : "中文";
-                sys.append("你是一名中越双语翻译。把用户给出的").append(fromName)
+                String fromName = TranslateConfig.targetLangName(fromLang);
+                sys.append("你是一名翻译。把用户给出的").append(fromName)
                    .append("翻译成").append(toName).append("。");
             }
             sys.append("只输出译文，不要解释、不要加引号、")
