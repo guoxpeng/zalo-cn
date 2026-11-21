@@ -1,7 +1,10 @@
-# Zalo PC 翻译注入安装器 v1.0.0
+# Zalo PC 翻译注入安装器 v1.0.1
 # 作用：在你现有的（已汉化）app.asar 上加翻译注入，不动汉化词条。
 # 听：收到的消息自动翻成中文（原文在上、译文在下框）
 # 说：输入框边上加「译」按钮，中文翻成越南语填回输入框，不自动发
+# 注入目标：主窗口 pc-dist/index.html（+ CSP 放行 bilibili API）
+#           与迷你窗口 pc-dist/compact-app.html 两个都注。
+#           只注 compact-app 的话主窗口里根本不加载（v1.0.0 的 bug，v1.0.1 修）。
 # 用法：右键 → 使用 PowerShell 运行；或在 PowerShell 里 .\install-translate.ps1
 # 要求：已装 Node.js（npx 可用）；Zalo 先关掉（脚本会尝试先关，关不掉会停下等你手动关）
 
@@ -55,22 +58,52 @@ try {
   npx --yes @electron/asar extract $Asar $tmp | Out-Null
   if ($LASTEXITCODE -ne 0) { throw "asar 解包失败" }
 
-  $html = Join-Path $tmp "pc-dist\compact-app.html"
   $jsDst = Join-Path $tmp "pc-dist\zalocn-translate.js"
-  if (-not (Test-Path $html)) { throw "解包后没找到 pc-dist\compact-app.html（版本不对？）" }
-
   Copy-Item $JsSrc $jsDst -Force
-  $content = Get-Content $html -Raw -Encoding UTF8
-  if ($content -notmatch "zalocn-translate.js") {
-    $anchor = '<script src="compact-app-pc.'
-    $idx = $content.IndexOf($anchor)
-    if ($idx -lt 0) { throw "compact-app.html 里没找到主 bundle 的 script 标签" }
-    $end = $content.IndexOf('</script>', $idx) + '</script>'.Length
-    $content = $content.Substring(0, $end) + '<script src="zalocn-translate.js"></script>' + $content.Substring($end)
-    Set-Content $html $content -Encoding UTF8 -NoNewline
-    Write-Host "已往 compact-app.html 注入脚本引用。"
+
+  # 主窗口 index.html（平时用的那个）：加引用 + CSP 放行 bilibili API
+  # 注意：主窗口加载的是 index.html，不是 compact-app.html；
+  # 只注入 compact-app.html 的话主窗口里根本不会加载脚本。
+  $indexHtml = Join-Path $tmp "pc-dist\index.html"
+  if (-not (Test-Path $indexHtml)) { throw "解包后没找到 pc-dist\index.html（版本不对？）" }
+  $content = Get-Content $indexHtml -Raw -Encoding UTF8
+  if ($content -match 'data-zalocn="main"') {
+    Write-Host "index.html 已有翻译注入引用，跳过。"
   } else {
-    Write-Host "compact-app.html 已有注入引用，跳过。"
+    $tag = '<script src="zalocn-translate.js" data-zalocn="main"></script>'
+    $last = $content.LastIndexOf('</script>')
+    if ($last -lt 0) { throw "index.html 里没找到 </script>" }
+    $end = $last + '</script>'.Length
+    $content = $content.Substring(0, $end) + $tag + $content.Substring($end)
+    Write-Host "已往 index.html 注入翻译脚本引用。"
+  }
+  if ($content -notmatch "index-translate.bilibili.com") {
+    $key = "connect-src "
+    $pos = $content.IndexOf($key)
+    if ($pos -lt 0) { throw "index.html 的 CSP 里没找到 connect-src" }
+    $pos += $key.Length
+    $content = $content.Substring(0, $pos) + "https://index-translate.bilibili.com " + $content.Substring($pos)
+    Write-Host "已给 index.html 的 CSP 放行 bilibili 翻译 API。"
+  }
+  Set-Content $indexHtml $content -Encoding UTF8 -NoNewline
+
+  # 迷你窗口 compact-app.html（--launch-compact-app 启动时用；无 CSP）
+  $html = Join-Path $tmp "pc-dist\compact-app.html"
+  if (Test-Path $html) {
+    $content = Get-Content $html -Raw -Encoding UTF8
+    if ($content -notmatch "zalocn-translate.js") {
+      $anchor = '<script src="compact-app-pc.'
+      $idx = $content.IndexOf($anchor)
+      if ($idx -lt 0) { throw "compact-app.html 里没找到主 bundle 的 script 标签" }
+      $end = $content.IndexOf('</script>', $idx) + '</script>'.Length
+      $content = $content.Substring(0, $end) + '<script src="zalocn-translate.js"></script>' + $content.Substring($end)
+      Set-Content $html $content -Encoding UTF8 -NoNewline
+      Write-Host "已往 compact-app.html 注入脚本引用。"
+    } else {
+      Write-Host "compact-app.html 已有注入引用，跳过。"
+    }
+  } else {
+    Write-Host "解包后没有 compact-app.html，跳过迷你窗口注入。"
   }
 
   Write-Host "正在重打包…"

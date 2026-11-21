@@ -1,5 +1,6 @@
-// Zalo PC 翻译注入 v1.0.0 — 听（收消息自动翻）+ 说（译按钮）
-// 注入方式：compact-app.html 里加 <script src="zalocn-translate.js">
+// Zalo PC 翻译注入 v1.0.1 — 听（收消息自动翻）+ 说（译按钮）
+// 注入方式：index.html 与 compact-app.html 里加 <script src="zalocn-translate.js">
+// （v1.0.1：主窗口加载 index.html，只注 compact-app 的话主窗口不加载）
 // 不改 Zalo 逻辑、不自动发消息；翻译走 bilibili 公开 API（免密钥），失败回落 Google。
 (function () {
   'use strict';
@@ -283,7 +284,7 @@
       }, 500);
       // 切换会话时重扫
       setInterval(scanAll, 3000);
-      log('zalocn translate v1.0.0 ready, incoming->' + CFG.incomingTarget + ', outgoing->' + CFG.outgoingTarget);
+      log('zalocn translate v1.0.1 ready, incoming->' + CFG.incomingTarget + ', outgoing->' + CFG.outgoingTarget);
     } catch (e) { log('boot error', e); }
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);

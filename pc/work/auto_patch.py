@@ -13,6 +13,10 @@
 收到的消息自动翻成中文（原文在上、译文在下框），输入框边加「译」按钮
 （点一下把中文翻成越南语填回输入框，不自动发）。翻译走用户自填的大模型
 API（默认 bilibili 公开接口，免密钥），不改 Zalo 登录/账号/网络逻辑。
+注入目标是主窗口 pc-dist/index.html 与迷你窗口 compact-app.html 两个
+（主窗口加载 index.html，只注 compact-app 的话主窗口里根本不加载；
+index.html 有严格 CSP，注入时把 bilibili API 加进 connect-src 放行，
+Google 兜底走 *.googleapis.com 本来就在放行列表里）。
 Zalo 更新后新版 asar 是原版（未汉化、无注入），下次检测自动走全流程重打，
 翻译随汉化一起恢复，无需手动重装。
 
@@ -51,10 +55,15 @@ INSTALL_ROOT = r"C:/Users/laogu/AppData/Local/Programs/Zalo"
 MARK_HAN = 'text:"中文"'
 MARK_VIE = 'text:"Tiếng Việt"'
 # 翻译注入：JS 源文件（与本脚本同目录下的 translate/）与 asar 内的检测标记。
+# 主窗口加载 pc-dist/index.html（有严格 CSP），迷你窗口加载 compact-app.html；
+# 两个都要注入。主窗口的注入带 data-zalocn="main" 标记，has_translate 只认它
+# （过渡期：只注入了 compact-app 的旧包会被正确识别为“缺注入”而重打）。
 TRANSLATE_JS = os.path.join(HERE, "translate", "zalocn-translate.js")
-TRANSLATE_MARK = "zalocn-translate.js"
-TRANSLATE_HTML = os.path.join("pc-dist", "compact-app.html")
+TRANSLATE_MARK = 'data-zalocn="main"'
+TRANSLATE_INDEX_HTML = os.path.join("pc-dist", "index.html")
+TRANSLATE_COMPACT_HTML = os.path.join("pc-dist", "compact-app.html")
 TRANSLATE_JS_DST = os.path.join("pc-dist", "zalocn-translate.js")
+TRANSLATE_API_HOST = "https://index-translate.bilibili.com"
 PY = sys.executable
 
 
@@ -132,8 +141,9 @@ def is_hanhua(asar_path, chunk_bytes=8 * 1024 * 1024):
 
 
 def has_translate(asar_path, chunk_bytes=8 * 1024 * 1024):
-    """检测 asar 是否已带翻译注入（找 zalocn-translate.js 标记）。
-    注入脚本与引用都含该标记，命中即认为已注入。"""
+    """检测 asar 是否已带翻译注入。只认主窗口（index.html）的注入标记
+    data-zalocn="main"。只注入了 compact-app 的旧包会返回 False，
+    以便正确触发重打。"""
     mark = TRANSLATE_MARK.encode()
     tail = b""
     with open(asar_path, "rb") as f:
@@ -148,31 +158,77 @@ def has_translate(asar_path, chunk_bytes=8 * 1024 * 1024):
     return False
 
 
+def _inject_script_tag(content, tag, anchor):
+    """在 anchor 指定的主 bundle </script> 后插入 tag。
+    调用方已确认尚未注入。返回新内容。"""
+    idx = content.find(anchor)
+    if idx < 0:
+        raise RuntimeError("HTML 里没找到主 bundle 的 script 标签")
+    end = content.find("</script>", idx) + len("</script>")
+    return content[:end] + tag + content[end:]
+
+
+def _extend_csp_for_translate(content):
+    """给 index.html 的 CSP connect-src 放行翻译 API（bilibili）。
+    script-src 已含 'self'，本地脚本可直接加载；Google 兜底走
+    *.googleapis.com，已在 connect-src 里，无需加。已有则不动。"""
+    if TRANSLATE_API_HOST in content:
+        return content, False
+    key = "connect-src "
+    idx = content.find(key)
+    if idx < 0:
+        raise RuntimeError("index.html 的 CSP 里没找到 connect-src")
+    pos = idx + len(key)
+    return content[:pos] + TRANSLATE_API_HOST + " " + content[pos:], True
+
+
 def inject_translate(tree_dir):
     """往已解包的 app 树里加翻译注入（不碰词库与原生文件）。
     - 拷 translate/zalocn-translate.js -> pc-dist/zalocn-translate.js
-    - 在 pc-dist/compact-app.html 主 bundle 的 </script> 后加引用
+    - 主窗口 pc-dist/index.html：加引用（带 data-zalocn="main" 标记）+
+      CSP connect-src 放行 bilibili API
+    - 迷你窗口 pc-dist/compact-app.html：加引用（无 CSP，无需改）
     已注入时跳过（幂等，可重复跑）。"""
     if not os.path.isfile(TRANSLATE_JS):
         raise RuntimeError("找不到翻译脚本 " + TRANSLATE_JS)
-    html_path = os.path.join(tree_dir, TRANSLATE_HTML)
     js_dst = os.path.join(tree_dir, TRANSLATE_JS_DST)
-    if not os.path.isfile(html_path):
-        raise RuntimeError("解包树里没找到 " + TRANSLATE_HTML + "（版本不对？）")
     shutil.copy2(TRANSLATE_JS, js_dst)
-    content = open(html_path, encoding="utf-8").read()
+
+    # 主窗口 index.html（用户平时用的那个）
+    index_path = os.path.join(tree_dir, TRANSLATE_INDEX_HTML)
+    if not os.path.isfile(index_path):
+        raise RuntimeError("解包树里没找到 " + TRANSLATE_INDEX_HTML + "（版本不对？）")
+    content = open(index_path, encoding="utf-8").read()
+    tag_main = '<script src="zalocn-translate.js" data-zalocn="main"></script>'
     if TRANSLATE_MARK in content:
-        log("compact-app.html 已有翻译注入引用，跳过。")
-        return
-    anchor = '<script src="compact-app-pc.'
-    idx = content.find(anchor)
-    if idx < 0:
-        raise RuntimeError("compact-app.html 里没找到主 bundle 的 script 标签")
-    end = content.find("</script>", idx) + len("</script>")
-    content = (content[:end] + '<script src="zalocn-translate.js"></script>'
-               + content[end:])
-    open(html_path, "w", encoding="utf-8", newline="").write(content)
-    log("已往 compact-app.html 注入翻译脚本引用。")
+        log("index.html 已有翻译注入引用，跳过。")
+    else:
+        # 插到最后一个 </script> 之后（主 bundle 之后），确保晚于应用脚本加载
+        last = content.rfind("</script>")
+        if last < 0:
+            raise RuntimeError("index.html 里没找到 </script>")
+        end = last + len("</script>")
+        content = content[:end] + tag_main + content[end:]
+        log("已往 index.html 注入翻译脚本引用。")
+    content, csp_changed = _extend_csp_for_translate(content)
+    if csp_changed:
+        log("已给 index.html 的 CSP 放行 bilibili 翻译 API。")
+    open(index_path, "w", encoding="utf-8", newline="").write(content)
+
+    # 迷你窗口 compact-app.html（--launch-compact-app 启动时用）
+    compact_path = os.path.join(tree_dir, TRANSLATE_COMPACT_HTML)
+    if os.path.isfile(compact_path):
+        content = open(compact_path, encoding="utf-8").read()
+        if "zalocn-translate.js" in content:
+            log("compact-app.html 已有翻译注入引用，跳过。")
+        else:
+            tag = '<script src="zalocn-translate.js"></script>'
+            content = _inject_script_tag(
+                content, tag, '<script src="compact-app-pc.')
+            open(compact_path, "w", encoding="utf-8", newline="").write(content)
+            log("已往 compact-app.html 注入翻译脚本引用。")
+    else:
+        log("解包树里没有 compact-app.html，跳过迷你窗口注入。")
 
 
 def npx_env():
