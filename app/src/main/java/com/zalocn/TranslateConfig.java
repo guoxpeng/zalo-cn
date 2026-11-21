@@ -10,7 +10,6 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.UUID;
 
 import de.robv.android.xposed.XSharedPreferences;
 import de.robv.android.xposed.XposedBridge;
@@ -62,18 +61,23 @@ public class TranslateConfig {
      * （FreeTranslateClient，不用密钥、不读上面三项）。
      */
     public String engine = "ai";
-    /** 收到外语消息自动翻译（目标语见 incomingTargetLang）。 */
-    public boolean autoIncoming = true;
-    /** 翻译开关总闸。 */
+    /** 信息自动翻译：收到的消息自动翻（目标语见 incomingTargetLang）。 */
     public boolean enabled = true;
     /** 自定义翻译提示词：追加到每次翻译的系统提示词后（如地名按越南官方译名、
      *  不要直译人名地名）。空 = 不用。 */
     public String customPrompt = "";
-    /** 输入框“译”按钮：同时保留中文原文（中文一行 + 越南语一行）。关 = 只填越南语译文。 */
+    /** 输入框“译”按钮：保留原文发送（中文一行 + 译文一行）。关 = 只填译文。 */
     public boolean inputKeepOriginal = true;
 
-    /** 接收翻译的目标语言代码（面板“收到消息翻译成”），默认 "zh" 中文。 */
+    /** 接收翻译的目标语言代码（面板“默认译文语言”），默认 "zh" 中文。 */
     public String incomingTargetLang = "zh";
+
+    /** 输入框“译”按钮的默认翻译语言代码（面板“‘译’按钮默认翻译”），默认 "vi" 越南语。 */
+    public String outgoingTargetLang = "vi";
+
+    /** 界面汉化：Zalo 界面文字显示中文。关 = 保持越文原样（消息翻译不受影响）。
+     * 默认开（模块原来的汉化功能一直是开着的，老用户升级后行为不变）。 */
+    public boolean uiLocalize = true;
 
     /** 接收翻译可选的目标语言：{代码, 显示名}。代码也是 LLM 提示词与 p7g/o7g 的键。 */
     public static final String[][] TARGET_LANGS = {
@@ -94,19 +98,6 @@ public class TranslateConfig {
         return "中文";
     }
 
-    /** 历史记录翻译专用配置（空 = 沿用主配置，按项生效）。 */
-    public String histBaseUrl = "";
-    public String histApiKey = "";
-    public String histModel = "";
-
-    /**
-     * 待办提醒校验 token（设置页生成的随机值）。
-     * Zalo 进程设闹钟时把它放进 PendingIntent extras，ReminderReceiver 核对
-     * 不上就丢弃，防止任意 App 发广播冒充提醒。经 XSharedPreferences 同步
-     * 到 Zalo 进程；模块进程侧直接读自身 prefs。
-     */
-    public String reminderToken = "";
-
     // ---- Zalo 进程侧：缓存 ----
     private static volatile TranslateConfig cached;
     private static volatile long cachedMtime = -1;
@@ -114,41 +105,18 @@ public class TranslateConfig {
     private static volatile boolean xspTried = false;
     private static volatile boolean xspLogged = false;
 
-    /** 历史/接收翻译用的生效配置（历史三项空着就沿用主配置，按项覆盖）。 */
-    public TranslateConfig resolveForHistory() {
-        if ((histBaseUrl == null || histBaseUrl.length() == 0)
-                && (histApiKey == null || histApiKey.length() == 0)
-                && (histModel == null || histModel.length() == 0)) {
-            return this;
-        }
-        TranslateConfig c = copyOf(this);
-        if (histBaseUrl != null && histBaseUrl.length() > 0) {
-            c.baseUrl = histBaseUrl;
-        }
-        if (histApiKey != null && histApiKey.length() > 0) {
-            c.apiKey = histApiKey;
-        }
-        if (histModel != null && histModel.length() > 0) {
-            c.model = histModel;
-        }
-        return c;
-    }
-
     static TranslateConfig copyOf(TranslateConfig src) {
         TranslateConfig c = new TranslateConfig();
         c.baseUrl = src.baseUrl;
         c.apiKey = src.apiKey;
         c.model = src.model;
         c.engine = src.engine;
-        c.autoIncoming = src.autoIncoming;
         c.enabled = src.enabled;
         c.customPrompt = src.customPrompt;
         c.inputKeepOriginal = src.inputKeepOriginal;
         c.incomingTargetLang = src.incomingTargetLang;
-        c.histBaseUrl = src.histBaseUrl;
-        c.histApiKey = src.histApiKey;
-        c.histModel = src.histModel;
-        c.reminderToken = src.reminderToken;
+        c.outgoingTargetLang = src.outgoingTargetLang;
+        c.uiLocalize = src.uiLocalize;
         return c;
     }
 
@@ -247,15 +215,13 @@ public class TranslateConfig {
         cfg.apiKey = nonEmpty(kv.get("apiKey"), "");
         cfg.model = nonEmpty(kv.get("model"), DEFAULT_MODEL);
         cfg.engine = nonEmpty(kv.get("engine"), "ai");
-        cfg.enabled = !"false".equals(kv.get("enabled"));
-        cfg.autoIncoming = !"false".equals(kv.get("autoIncoming"));
+        cfg.enabled = !"false".equals(kv.get("enabled"))
+                && !"false".equals(kv.get("autoIncoming")); // 旧版双开关合并：任一关过即关
         cfg.customPrompt = nonEmpty(kv.get("customPrompt"), "");
         cfg.inputKeepOriginal = !"false".equals(kv.get("inputKeepOriginal"));
         cfg.incomingTargetLang = nonEmpty(kv.get("incomingTargetLang"), "zh");
-        cfg.histBaseUrl = nonEmpty(kv.get("histBaseUrl"), "");
-        cfg.histApiKey = nonEmpty(kv.get("histApiKey"), "");
-        cfg.histModel = nonEmpty(kv.get("histModel"), "");
-        cfg.reminderToken = nonEmpty(kv.get("reminderToken"), "");
+        cfg.outgoingTargetLang = nonEmpty(kv.get("outgoingTargetLang"), "vi");
+        cfg.uiLocalize = !"false".equals(kv.get("uiLocalize"));
         return cfg;
     }
 
@@ -268,40 +234,17 @@ public class TranslateConfig {
             cfg.apiKey = nonEmpty(sp.getString("apiKey", null), "");
             cfg.model = nonEmpty(sp.getString("model", null), DEFAULT_MODEL);
             cfg.engine = nonEmpty(sp.getString("engine", null), "ai");
-            cfg.enabled = sp.getBoolean("enabled", true);
-            cfg.autoIncoming = sp.getBoolean("autoIncoming", true);
+            cfg.enabled = sp.getBoolean("enabled", true)
+                    && sp.getBoolean("autoIncoming", true); // 旧版双开关合并：任一关过即关
             cfg.customPrompt = nonEmpty(sp.getString("customPrompt", null), "");
             cfg.inputKeepOriginal = sp.getBoolean("inputKeepOriginal", true);
             cfg.incomingTargetLang = nonEmpty(sp.getString("incomingTargetLang", null), "zh");
-            cfg.histBaseUrl = nonEmpty(sp.getString("histBaseUrl", null), "");
-            cfg.histApiKey = nonEmpty(sp.getString("histApiKey", null), "");
-            cfg.histModel = nonEmpty(sp.getString("histModel", null), "");
-            cfg.reminderToken = sp.getString("reminderToken", "");
+            cfg.outgoingTargetLang = nonEmpty(sp.getString("outgoingTargetLang", null), "vi");
+            cfg.uiLocalize = sp.getBoolean("uiLocalize", true);
         } catch (Throwable t) {
             XposedBridge.log(TAG + " load settings config fail: " + t);
         }
         return cfg;
-    }
-
-    /**
-     * 设置进程侧：取提醒校验 token，没有就生成一个随机值存下（只在模块自身
-     * 进程做；Zalo 进程只读，不生成）。用户第一次打开设置页即生成，此后
-     * ReminderReceiver 强制校验；生成前（从未打开过设置页）接收器放行，
-     * 避免提醒在 token 生成前就被拒收。
-     */
-    public static String ensureReminderToken(Context ctx) {
-        try {
-            SharedPreferences sp = openPrefs(ctx);
-            String t = sp.getString("reminderToken", "");
-            if (t == null || t.length() == 0) {
-                t = UUID.randomUUID().toString();
-                sp.edit().putString("reminderToken", t).commit();
-            }
-            return t;
-        } catch (Throwable t2) {
-            XposedBridge.log(TAG + " ensure reminder token fail: " + t2);
-            return "";
-        }
     }
 
     /**
@@ -310,7 +253,7 @@ public class TranslateConfig {
      * MODE_WORLD_READABLE 打开 prefs，LSPosed 才把文件重定向到它管理的
      * 目录并放行该模式，被 hook 的 App（Zalo）才能读到；MODE_PRIVATE
      * 写出来的文件对 Zalo 的 UID 不可读，Zalo 侧会拿到默认配置（无 API
-     * key、不翻译；reminderToken 为空，提醒全被丢弃）。Android 13+ 上
+     * key、不翻译）。Android 13+ 上
      * 该模式可能抛 SecurityException，回落 MODE_PRIVATE。注意：不要加
      * 回 setReadable，那是另一回事。
      */
@@ -333,14 +276,12 @@ public class TranslateConfig {
             ed.putString("model", model);
             ed.putString("engine", engine);
             ed.putBoolean("enabled", enabled);
-            ed.putBoolean("autoIncoming", autoIncoming);
+            ed.remove("autoIncoming"); // 旧版双开关已合并，旧键清掉
             ed.putString("customPrompt", customPrompt);
             ed.putBoolean("inputKeepOriginal", inputKeepOriginal);
             ed.putString("incomingTargetLang", incomingTargetLang);
-            ed.putString("histBaseUrl", histBaseUrl);
-            ed.putString("histApiKey", histApiKey);
-            ed.putString("histModel", histModel);
-            ed.putString("reminderToken", reminderToken);
+            ed.putString("outgoingTargetLang", outgoingTargetLang);
+            ed.putBoolean("uiLocalize", uiLocalize);
             ed.commit();
         } catch (Throwable t) {
             XposedBridge.log(TAG + " save config fail: " + t);

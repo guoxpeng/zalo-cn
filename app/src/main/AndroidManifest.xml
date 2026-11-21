@@ -1,20 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.zalocn"
-    android:versionCode="18"
-    android:versionName="2.7.0">
+    android:versionCode="33"
+    android:versionName="3.0.0">
 
     <uses-sdk android:minSdkVersion="27" android:targetSdkVersion="34" />
 
-    <!-- 待办提醒到点触发：精确闹钟 + 通知。
-         注意：精确闹钟权限检查的是调用者（Zalo 进程）的权限，不是这里声明
-         的 SCHEDULE_EXACT_ALARM——模块清单里的声明对 Zalo 进程不起作用；
-         Zalo 没给该权限时代码回落到不精确闹钟（可能晚几分钟）。 -->
-    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 测试按钮在模块自己的设置页进程里直接调 API，必须声明联网权限。
+         （hook 在 Zalo 进程里跑，用的是 Zalo 自己的联网权限，所以之前“译”按钮
+         能翻、测试按钮却报“配置有误”——设置页进程根本没联网权限。） -->
+    <uses-permission android:name="android.permission.INTERNET" />
 
     <application
-        android:label="Zalo 汉化"
+        android:label="Zalo中文增强模块"
         android:icon="@mipmap/ic_launcher"
         android:allowBackup="false"
         android:extractNativeLibs="false">
@@ -40,24 +38,12 @@
 
         <activity
             android:name="com.zalocn.TranslateSettingsActivity"
-            android:label="Zalo 汉化设置"
+            android:label="Zalo中文增强模块设置"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-
-        <!-- 待办提醒闹钟接收器：只接系统按 PendingIntent 送达的本模块广播。
-             注意：exported=false 意味着只有同 UID 才能触发；闹钟由 Zalo 进程
-             排期、经系统送达，真机必须验证到点是否真响——若被系统拦截，
-             需改 exported=true（另加权限保护）才能用。 -->
-        <!-- 待办提醒接收器：必须 exported=true——闹钟 PendingIntent 由 Zalo 进程创建，
-             目标是另一个 App（com.zalocn）的组件；exported=false 时系统会按“非导出组件”
-             拒收（创建者 UID 与目标 UID 不同）。防冒充：广播须带设置页生成的随机
-             token（EXTRA_TOKEN），接收器核对不上直接丢弃。 -->
-        <receiver
-            android:name="com.zalocn.ReminderReceiver"
-            android:exported="true" />
     </application>
 </manifest>

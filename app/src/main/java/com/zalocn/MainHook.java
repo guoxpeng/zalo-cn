@@ -171,6 +171,13 @@ public class MainHook implements IXposedHookLoadPackage {
     /** 越南语原文 -> 中文 */
     private static volatile Map<String, String> zhByVi;
 
+    /**
+     * 界面汉化总开关（设置页“启用界面汉化”）。
+     * Zalo 进程启动时从配置读一次；改完要强停 Zalo 再重开才生效。
+     * 默认开（模块原来的汉化一直是开着的，老用户升级后行为不变）。
+     */
+    static volatile boolean uiLocalize = true;
+
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) throws Throwable {
         // 全局防御：模块任何初始化异常都只记日志，绝不让异常外抛导致
@@ -187,6 +194,15 @@ public class MainHook implements IXposedHookLoadPackage {
             return;
         }
         loadTranslations();
+
+        // 界面汉化开关：Zalo 进程启动时读一次（MessageHook 同样在启动时读配置，
+        // 同一路子，已验证可行）。读失败默认开，不影响原有汉化。
+        try {
+            uiLocalize = TranslateConfig.loadForHook().uiLocalize;
+            XposedBridge.log(TAG + " uiLocalize=" + uiLocalize);
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + " uiLocalize config read fail, default true: " + t);
+        }
 
         // hook Application.attachBaseContext 以尽早持有应用 Context（备用）
         try {
@@ -500,6 +516,9 @@ public class MainHook implements IXposedHookLoadPackage {
      * 语言闸门：越南语模式下返回 null，界面保持越南语原文。
      */
     private static String lookupSource(String s) {
+        if (!uiLocalize) {
+            return null; // 界面汉化关了：硬编码/setText/ZInstant 文本一律不翻
+        }
         if (viMode && !zhModeProven) {
             return null;
         }
@@ -562,6 +581,9 @@ public class MainHook implements IXposedHookLoadPackage {
      * 语言闸门：越南语模式下直接返回 null，界面保持越南语原文。
      */
     static String translate(int id, Resources res) {
+        if (!uiLocalize) {
+            return null; // 界面汉化关了：资源层一律不翻
+        }
         if (id < 0x7f000000) {
             return null; // framework 资源不处理
         }

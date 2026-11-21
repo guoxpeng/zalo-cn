@@ -17,7 +17,7 @@ import java.util.Set;
 import de.robv.android.xposed.XposedBridge;
 
 /**
- * 翻译记忆 / 翻译缓存 / 待办提醒的本地存储。
+ * 翻译记忆 / 翻译缓存的本地存储。
  *
  * 运行在 Zalo 进程内，用 Zalo 自身的 SharedPreferences（"zalocn_tm"，MODE_PRIVATE），
  * 不依赖模块进程、不联网、不碰 Zalo 自己的数据表。
@@ -30,7 +30,6 @@ import de.robv.android.xposed.XposedBridge;
  * 在现有跨进程机制下做不到。上限 2000 条，超量时按时间戳删最旧的。
  * - 翻译记忆：按联系人记语言偏好（"lang:<对方标识>" -> "vi"/"zh"），以及用户确认过
  *   的译文对（与缓存同一份存储，键带方向，天然就是记忆库）。
- * - 待办提醒：每条提醒一条 JSON，字段 id / text / dueAt（毫秒）/ thread（会话标识，可空）。
  */
 public class TranslateStore {
 
@@ -176,78 +175,6 @@ public class TranslateStore {
         }
     }
 
-    // ---- 待办提醒 ----
-
-    public static class Reminder {
-        public String id;
-        public String text;
-        public long dueAt;
-        public String thread;
-
-        public JSONObject toJson() throws Exception {
-            JSONObject o = new JSONObject();
-            o.put("id", id);
-            o.put("text", text);
-            o.put("dueAt", dueAt);
-            o.put("thread", thread == null ? "" : thread);
-            return o;
-        }
-
-        public static Reminder fromJson(JSONObject o) {
-            Reminder r = new Reminder();
-            r.id = o.optString("id");
-            r.text = o.optString("text");
-            r.dueAt = o.optLong("dueAt");
-            r.thread = o.optString("thread");
-            return r;
-        }
-    }
-
-    /** 新增一条提醒并返回它（调用方随即用它排精确闹钟；失败返回 null）。 */
-    public Reminder addReminder(String text, long dueAt, String thread) {
-        try {
-            List<Reminder> list = getReminders();
-            Reminder r = new Reminder();
-            r.id = "r" + System.currentTimeMillis();
-            r.text = text;
-            r.dueAt = dueAt;
-            r.thread = thread;
-            list.add(r);
-            saveReminders(list);
-            return r;
-        } catch (Throwable t) {
-            XposedBridge.log(TAG + " addReminder fail: " + t);
-            return null;
-        }
-    }
-
-    public List<Reminder> getReminders() {
-        List<Reminder> out = new ArrayList<Reminder>();
-        try {
-            String raw = sp.getString("reminders", "[]");
-            JSONArray arr = new JSONArray(raw);
-            for (int i = 0; i < arr.length(); i++) {
-                out.add(Reminder.fromJson(arr.getJSONObject(i)));
-            }
-        } catch (Throwable t) {
-            XposedBridge.log(TAG + " getReminders fail: " + t);
-        }
-        return out;
-    }
-
-    public void saveReminders(List<Reminder> list) {
-        try {
-            JSONArray arr = new JSONArray();
-            for (Reminder r : list) {
-                arr.put(r.toJson());
-            }
-            sp.edit().putString("reminders", arr.toString()).apply();
-        } catch (Throwable t) {
-            XposedBridge.log(TAG + " saveReminders fail: " + t);
-        }
-    }
-
-    /** 取出所有已到期的提醒并从库里删除（调用方负责展示）。 */
     /** 原文/译文切换：用户手动隐藏过译文的消息键（hide:<f1()>）。 */
     public boolean isHidden(String msgKey) {
         if (msgKey == null) {
@@ -263,22 +190,6 @@ public class TranslateStore {
         SharedPreferences.Editor e = sp.edit();
         e.putBoolean("hide:" + msgKey, hidden);
         e.apply();
-    }
-
-    public List<Reminder> popDueReminders(long now) {
-        List<Reminder> due = new ArrayList<Reminder>();
-        List<Reminder> keep = new ArrayList<Reminder>();
-        for (Reminder r : getReminders()) {
-            if (r.dueAt <= now) {
-                due.add(r);
-            } else {
-                keep.add(r);
-            }
-        }
-        if (!due.isEmpty()) {
-            saveReminders(keep);
-        }
-        return due;
     }
 
     static String sha1(String s) {

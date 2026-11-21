@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # ============================================================================
-# Zalo 汉化模块（com.zalocn）一键构建脚本 —— 跨平台版
+# Zalo中文增强模块（com.zalocn）一键构建脚本 —— 跨平台版
 #
 # 用法：
 #   bash build/build_module.sh
-#   VERSION_CODE=18 VERSION_NAME=2.7 bash build/build_module.sh
+#   VERSION_CODE=33 VERSION_NAME=3.0.0 bash build/build_module.sh
 #
 # 依赖：
 #   - JDK 8+（推荐 17 / 21）
@@ -17,7 +17,7 @@
 #   ZALOZH_KEYSTORE                   签名证书路径（默认 ~/.config/zalocn/zalocn-release.keystore）
 #   ZALOZH_KS_PASS / ZALOZH_KEY_PASS  证书口令（必填，无默认值；旧默认口令已作废）
 #   ZALOZH_KEY_ALIAS                  别名（默认 zalocn）
-#   OUT                               产物路径（默认 <repo>/zalocn_hanhua.apk）
+#   OUT                               产物路径（默认 <repo>/Zalocn-E.apk）
 #
 # 签名安全（2026-11-21 轮换后）：旧 keystore（build/zalocn.keystore，旧默认口令）
 # 已公开作废，从仓库与历史中清除。新 keystore 只存放在仓库外
@@ -33,10 +33,10 @@ cd "$ROOT"
 SRC_JAVA="app/src/main/java"
 MANIFEST_SRC="app/src/main/AndroidManifest.xml"
 WORK="build/build_work"
-OUT="${OUT:-$ROOT/zalocn_hanhua.apk}"
+OUT="${OUT:-$ROOT/Zalocn-E.apk}"
 
-VERSION_CODE="${VERSION_CODE:-17}"
-VERSION_NAME="${VERSION_NAME:-2.6.1}"
+VERSION_CODE="${VERSION_CODE:-33}"
+VERSION_NAME="${VERSION_NAME:-3.0.0}"
 
 # ---------------------------------------------------------------- 工具定位
 tool() { # tool <build-tools-dir> <name>

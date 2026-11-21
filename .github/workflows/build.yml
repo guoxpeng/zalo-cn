@@ -40,7 +40,7 @@ jobs:
             NAME="${GITHUB_REF_NAME#v}"
             CODE=$(grep -oP 'android:versionCode="\K[0-9]+' app/src/main/AndroidManifest.xml)
           else
-            NAME="2.6.1-dev"
+            NAME="3.0.0-dev"
             CODE=$(grep -oP 'android:versionCode="\K[0-9]+' app/src/main/AndroidManifest.xml)
           fi
           echo "name=$NAME" >> "$GITHUB_OUTPUT"
@@ -75,8 +75,8 @@ jobs:
       - name: 上传产物
         uses: actions/upload-artifact@v4
         with:
-          name: zalocn-${{ steps.ver.outputs.name }}
-          path: zalocn_hanhua.apk
+          name: Zalocn-E-${{ steps.ver.outputs.name }}
+          path: Zalocn-E.apk
           if-no-files-found: error
           retention-days: 30
 
@@ -84,7 +84,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: zalocn_hanhua.apk
+          files: Zalocn-E.apk
           name: Zalo 汉化 ${{ steps.ver.outputs.name }}
           body_path: RELEASE_NOTES_v${{ steps.ver.outputs.name }}.md
           fail_on_unmatched_files: true

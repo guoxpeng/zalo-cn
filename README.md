@@ -1,4 +1,4 @@
-# Zalo 汉化（com.zalocn）
+# Zalo中文增强模块（com.zalocn）
 
 > 把 Zalo 界面从**越南语 / 英文**翻译成**简体中文**的 Xposed 模块。
 > 在越南打拼的中国朋友，装上它，界面就顺眼多了。
@@ -9,15 +9,33 @@
 
 ---
 
+## 🎉 v3.0.0 重磅更新：消息也能翻了
+
+> 完整更新说明见 [RELEASE_NOTES_v3.0.0.md](RELEASE_NOTES_v3.0.0.md)。
+
+这一版模块从「界面汉化工具」变成了「在越南用 Zalo 跟当地人沟通的中文助手」：
+
+- **收到的消息实时翻译**：越南语自动翻成中文，原文在上、译文在下，11 种目标语言可选
+- **输入框「译」按钮**：输中文点一下，翻成越南语（或你选的语言）填回输入框，检查完自己点发送
+- **自定义大模型 API**：OpenAI 兼容接口，免密钥的公开 API 也能用（比如 bilibili 公开翻译接口）
+- **模板系统**：每个大模型独立保存自己的 API 数据，拉下切换就换生效模型
+- **免费引擎**：Google / Google 备用 / Bing / MyMemory，免密钥，选上直接用
+- **测试当前 API**：点一下验证，成功显示「当前api配置能正常使用」，失败直接显示原因
+  （连接失败 / API 地址有误 / 找不到模型 / API 错误）
+- **设置页改版**：分区卡片，全部自动保存，不用再点保存按钮
+
+界面汉化还是离线词表；消息翻译走你自己的 API 或免费引擎，需要联网。
+
+---
+
 ## 一句话原理
 
-Zalo 的界面文本几乎全部来自资源表（`resources.arsc`），读取路径统一经过
-`Resources.getText(int)` / `getQuantityText(int,int)`。模块 hook 这几个方法，
-按资源 ID 惰性解析出资源名（如 `str_setting_privacy`），命中翻译表就直接返回中文。
-服务器下发的动态 UI（ZInstant）和写死在代码里的字符串，则走 `TextView.setText`
-与 ZOM 节点文本替换。
+Zalo 的界面文本几乎都来自资源表，模块在读取时按资源名换成中文；
+服务器下发的动态界面和写死在代码里的文本，走 `TextView.setText` 替换。
 
-**纯显示层替换**：不改 Zalo 本体、不碰网络请求、不读写账号数据、模块自身不联网。
+**只改显示，不碰账号和网络请求**。界面汉化是离线词表，不联网；
+**消息翻译**走你自己填的大模型 API 或免费翻译引擎（设置页的「测试当前 API」
+在模块自己的进程里发请求，所以声明了联网权限）。
 
 ---
 
@@ -25,26 +43,27 @@ Zalo 的界面文本几乎全部来自资源表（`resources.arsc`），读取�
 
 | | |
 |---|---|
-| **翻译量** | 12637 条资源字符串（Zalo 资源表 12351 条可译项 **100% 覆盖**）+ 10200 条源码/服务端文本映射 |
+| **翻译量** | 12697 条资源字符串（Zalo 26.11.01 实测 12658 条，词表覆盖 **99.3%**）+ 10239 条源码/服务端文本映射 |
+| **消息翻译** | 收到的消息自动翻成你选的语言（11 种），原文在上、译文在下；输入框「译」按钮把中文翻好填回，不自动发 |
+| **大模型 API** | 自定义 OpenAI 兼容接口；模板系统（每个模板独立保存 API 数据）；免密钥公开 API 也能用 |
+| **免费引擎** | Google / Google 备用 / Bing / MyMemory，免密钥，选上直接用 |
 | **双语识别** | **越南语 → 保持越南语**；**英文 → 中文**。模块自动跟随 Zalo 内建的语言开关 |
 | **服务器文本** | 支持 ZInstant 动态 UI（安全检查页、小程序分类等）的节点文本替换 |
-| **离线可用** | 词表打包在 APK assets 内，运行时不联网 |
-| **体积** | 约 470 KB |
+| **离线可用** | 界面汉化词表打包在 APK assets 内，运行时不联网；消息翻译需要联网（走你自己的 API） |
+| **体积** | 约 510 KB |
 
 ### 语言行为说明
 
-Zalo 自带「语言」设置（Tiếng Việt / English）。模块的判断逻辑：
+Zalo 自带「语言」设置（Tiếng Việt / English），模块跟它走：
 
 - 界面语言 = **Tiếng Việt** → 模块**完全不介入**，界面保持越南语原文
 - 界面语言 = **English** → 全部替换为简体中文
-- 判断依据是 `Configuration.getLocales()` 的首选语言，只在读取 Zalo 自身资源
-  （资源 ID ≥ `0x7f000000`）时更新，避免被系统资源刷掉
 
 ---
 
 ## 支持版本
 
-- 实测 **Zalo 26.10.02（26.10.2）**，Android 14 真机验证通过
+- 实测 **Zalo 26.11.01**，Android 16 真机（联想 Y70 新一代）验证
 - hook 的是系统层方法，不依赖具体 Zalo 版本号，26.x 新老版本大概率通用
 - 系统要求：**Android 8.1+**，需 Root + **LSPosed / Vector**
 
@@ -52,7 +71,7 @@ Zalo 自带「语言」设置（Tiếng Việt / English）。模块的判断逻
 
 ## 安装
 
-1. 到 [Releases](../../releases) 下载最新的 `zalocn_hanhua.apk` 并安装（包名 `com.zalocn`，应用名「Zalo 汉化」）
+1. 到 [Releases](../../releases) 下载最新的 `Zalocn-E.apk` 并安装（包名 `com.zalocn`，应用名「Zalo中文增强模块」）
 2. 打开 LSPosed / Vector Manager → 启用模块 → **作用域勾选 Zalo（`com.zing.zalo`）**
    （这步漏了不生效）
 3. **强制停止 Zalo 再重开**（模块只在进程新建时注入）
@@ -78,30 +97,21 @@ Zalo 自带「语言」设置（Tiếng Việt / English）。模块的判断逻
 export ANDROID_SDK_ROOT=/path/to/android-sdk
 
 bash build/build_module.sh
-# 产物：./zalocn_hanhua.apk
+# 产物：./Zalocn-E.apk
 ```
 
 指定版本号：
 
 ```bash
-VERSION_CODE=18 VERSION_NAME=2.7 bash build/build_module.sh
+VERSION_CODE=33 VERSION_NAME=3.0.0 bash build/build_module.sh
 ```
 
 Windows（Git Bash）同样可用，脚本会自动补 `.exe` / `.bat` 后缀。
 
-### 构建流程（脚本做的事）
+### 构建流程
 
-```
-javac  →  d8  →  aapt2 link  →  拼装 dex+assets  →  zip  →  zipalign  →  apksigner
-```
-
-1. 把 `AndroidManifest.xml` 的版本号替换成传入值
-2. `javac` 编译 `app/src/main/java/**`（`de.robv.*` 只是编译期桩类）
-3. `d8` 只把 `com/zalocn/**` 打成 `classes2.dex`
-4. `aapt2 link` 由源码 manifest 生成基础 APK
-5. 塞入 `classes.dex`（空壳，Xposed 要求存在）、`classes2.dex`、
-   `assets/translations.json`、`assets/src_map.json`、`assets/xposed_init`
-6. `resources.arsc` 不压缩打包 → `zipalign -p 4` → `apksigner` 签名（v1+v2+v3）
+`javac → d8 → aapt2 link → 拼装 dex+assets → zip → zipalign → apksigner`，
+版本号由传入值替换进 `AndroidManifest.xml`。
 
 ### GitHub Actions 自动打包
 
@@ -110,13 +120,13 @@ javac  →  d8  →  aapt2 link  →  拼装 dex+assets  →  zip  →  zipalign
 | 触发 | 行为 |
 |---|---|
 | push 到 `main` / PR | 构建并在 Actions 页面提供 artifact（保留 30 天） |
-| push tag `v2.6.1` 这类标签 | 构建 + 自动发布 Release，附带 APK 与 `RELEASE_NOTES_v2.6.1.md` |
+| push tag `v3.0.0` 这类标签 | 构建 + 自动发布 Release，附带 APK 与 `RELEASE_NOTES_v3.0.0.md` |
 | 手动 `workflow_dispatch` | 构建并出 artifact |
 
 发新版：
 
 ```bash
-git tag v2.6.1 && git push origin v2.6.1
+git tag v3.0.0 && git push origin v3.0.0
 ```
 
 ### 两个仓库的分工与发布约定
@@ -125,15 +135,11 @@ git tag v2.6.1 && git push origin v2.6.1
 
 | 仓库 | 用途 | Release tag | 附件名 | 发布方式 |
 |---|---|---|---|---|
-| `guoxpeng/zalo-cn` | 源码主仓、面向用户 | `v2.6.1` | `zalocn_hanhua.apk` | CI 打 tag 自动发 |
-| `Xposed-Modules-Repo/com.zalocn` | LSPosed 模块列表收录 | `17-2.6.1`（`versionCode-versionName`） | `Zalo-cn_v2.6.1.apk` | **该仓库未启用 Actions，需手动上传** |
+| `guoxpeng/zalo-cn` | 源码主仓、面向用户 | `v3.0.0` | `Zalocn-E.apk` | CI 打 tag 自动发 |
+| `Xposed-Modules-Repo/com.zalocn` | LSPosed 模块列表收录 | `33-3.0.0`（`versionCode-versionName`） | `Zalocn-E_v3.0.0.apk` | **该仓库未启用 Actions，需手动上传** |
 
-> 第二个仓库的 tag 必须是 `<versionCode>-<versionName>`，模块管理器靠它比对版本、
-> 判断要不要提示更新。附件名也保持 `Zalo-cn_v<versionName>.apk` 的历史命名。
-
-> **注意**：第二个仓库的 `README.md` 是**独立的镜像说明**（首屏引导用户回源码仓库，
-> 并说明「同步后才更新版本」），**不要**用本仓库的 README 覆盖它。
-> 同步源码时记得排除 `README.md`。
+> 第二个仓库的 tag 必须是 `<versionCode>-<versionName>`，模块管理器靠它判断要不要提示更新。
+> 它的 `README.md` 是独立的镜像说明，**不要**用本仓库的 README 覆盖它，同步源码时排除。
 
 一次性把两个仓库都发好：
 
@@ -143,8 +149,8 @@ bash build/publish.sh
 SKIP_BUILD=1 bash build/publish.sh
 ```
 
-脚本会自动读 `AndroidManifest.xml` 的版本号、按上面的约定创建（或复用）Release、
-删掉同名旧附件再上传，令牌默认读 `~/.workbuddy-ai/secrets/github_token`。
+脚本自动读版本号、创建（或复用）Release、删掉同名旧附件再上传，
+令牌默认读 `~/.workbuddy-ai/secrets/github_token`。
 
 ---
 
@@ -153,9 +159,12 @@ SKIP_BUILD=1 bash build/publish.sh
 ```
 .
 ├── app/src/main/
-│   ├── AndroidManifest.xml          # Xposed 元数据（xposedmodule / xposedscope）
+│   ├── AndroidManifest.xml          # Xposed 元数据
 │   └── java/
-│       ├── com/zalocn/MainHook.java  # 模块全部逻辑（资源层 + 文本层 + ZInstant）
+│       ├── com/zalocn/              # MainHook（汉化入口）、MessageHook（消息翻译）、
+│       │                            # LlmClient（大模型）、FreeTranslateClient（免费引擎）、
+│       │                            # TranslateConfig / TranslateStore / ModelProfile（配置、缓存、模板）、
+│       │                            # TranslateSettingsActivity（设置页）
 │       └── de/robv/android/xposed/   # Xposed API 桩类（仅编译用，不进 dex）
 ├── data/
 │   ├── translations.json             # 资源名 -> 中文（12697 条）
@@ -164,68 +173,48 @@ SKIP_BUILD=1 bash build/publish.sh
 │   ├── build_module.sh               # 一键构建脚本（跨平台）
 │   ├── publish.sh                    # 一键发布到两个仓库的 Release
 │   └── classes_dex_empty.dex         # 空壳主 dex
-│       # 签名证书不在仓库里：只存 ~/.config/zalocn/zalocn-release.keystore（见下方说明）
+│       # 签名证书不在仓库里：只存 ~/.config/zalocn/zalocn-release.keystore
 ├── .github/workflows/build.yml       # CI：自动打包 + Release
 └── RELEASE_NOTES_v*.md               # 各版本更新说明
 ```
 
-### 翻译数据格式
-
-`data/translations.json` —— 键是 Zalo 的资源名，值是中文：
-
-```json
-{
-  "label_tab_message": "消息",
-  "str_setting_privacy": "隐私",
-  "str_noti_N_character": "N"
-}
-```
-
-`data/src_map_compact.json` —— 键是英文原文（用于写死文本 / 服务器下发文本）：
-
-```json
-{
-  "en": { "My Documents": "我的文档", "Timeline": "动态" },
-  "vi": {}
-}
-```
-
-> `vi` 表固定留空：越南语模式下模块整体不翻译，不需要越南语词表。
-
 ### 翻译约定（改词表前请先读）
 
-1. **单字符 / 纯符号 / 纯格式串一律不翻译**。像 `str_noti_N_character`（值就是 `N`）
-   这类角标用图标字体渲染，塞汉字会显示成随机字形（曾出现「N」变成「氮」的严重 bug）。
-2. **占位符必须保留**：`%1$s` `%d` `{0}` 原样带过来；`%2$s` 这类英文复数后缀在中文里要删掉。
-3. **一词多义要按语境定**，别按字面直译。踩过的坑：
-   `Crop`≠庄稼（是裁剪）、`Feed`≠饲料（是动态）、`Live`≠居住（是直播）、
-   `Call`≠称呼（是通话）、`Quit`≠辞职（是退出）、`Auto`≠汽车（是自动）、
-   `Active Code`≠活动代码（是激活码）、`Event`≠活动（日历里是日程）。
+1. **单字符 / 纯符号 / 纯格式串一律不翻译**（角标用图标字体渲染，塞汉字会显示成随机字形，曾出现「N」变成「氮」）。
+2. **占位符必须保留**：`%1$s` `%d` `{0}` 原样带过来；英文复数后缀 `%2$s` 在中文里删掉。
+3. **一词多义按语境定**，别按字面直译：`Crop` 是裁剪不是庄稼、`Feed` 是动态不是饲料、
+   `Live` 是直播不是居住、`Call` 是通话不是称呼、`Quit` 是退出不是辞职、
+   `Auto` 是自动不是汽车、`Active Code` 是激活码、`Event` 在日历里是日程。
 4. **品牌名不译**：Zalo、zBusiness、zCloud、zStyle、GIF、GPS、PDF、OA（译作公众号）等。
-5. **URL / 包名 / 语言码不译**：`file:///...`、`com.zing.zalo.*`、`en` 这类必须保持原样。
+5. **URL / 包名 / 语言码不译**：`file:///...`、`com.zing.zalo.*`、`en` 这类保持原样。
+
+> `data/translations.json` 的键是 Zalo 资源名、值是中文；`data/src_map_compact.json`
+> 的键是英文原文（用于写死文本 / 服务器下发文本），`vi` 表固定留空
+> （越南语模式下模块整体不翻译）。
 
 ---
 
 ## 签名说明
 
-旧证书已于 2026-11-21 作废：`build/zalocn.keystore`（旧默认口令）曾公开入库，
-任何人都能用它签出同名可覆盖安装的包，已从仓库和分支历史里清除，不要再用。
+旧证书已于 2026-11-21 作废（曾公开入库，任何人都能用它签出同名可覆盖安装的包，
+已从仓库和分支历史里清除，不要再用）。
 
-- 新证书只存放在仓库外（`~/.config/zalocn/zalocn-release.keystore`），口令不进仓库、不进脚本；
-  CI 从 GitHub Secrets 读（`KEYSTORE_BASE64` / `KEYSTORE_PASSWORD` / `KEY_PASSWORD` / `KEY_ALIAS`）
-- 新证书指纹：`SHA-256 7F:CC:08:55:44:42:F3:BE:99:1E:14:73:6D:DC:FE:76:F4:32:E6:C1:8D:F1:E2:ED:AC:70:AC:21:D8:20:65:16`（RSA 4096）
+- 新证书只存仓库外（`~/.config/zalocn/zalocn-release.keystore`），口令不进仓库、不进脚本；
+  CI 从 GitHub Secrets 读。指纹：`SHA-256 7F:CC:08:55:44:42:F3:BE:99:1E:14:73:6D:DC:FE:76:F4:32:E6:C1:8D:F1:E2:ED:AC:70:AC:21:D8:20:65:16`（RSA 4096）
 - 新旧签名不兼容：装 2.7.0 测试版要先卸载旧版（卸载会丢 LSPosed 作用域配置，装完要重新勾 Zalo）
-- 它**只用于本项目自签名分发**，不要复用到任何其他项目；
-  只从本仓库 Releases 下载，或自行从源码构建
+- 证书**只用于本项目自签名分发**，不要复用到其他项目；只从本仓库 Releases 下载，或自行从源码构建
 
 ---
 
 ## 已知限制
 
-- **钱包里的 Activity（交易记录）、Card（卡）页面仍是英文**：这两个页面不是原生界面，
-  而是 Zalo 服务器下发的 H5 网页（内容与排版全由服务端渲染），常规资源汉化碰不到。
-  要翻得往模块里塞一套网页翻译引擎 + 上万条网页词库，体积翻倍且需在 Zalo 的网页环境
-  注入脚本执行，违背「只改显示、不碰执行逻辑」的原则，故不做。
+- **消息气泡上会显示「模块翻译」**：这是 Zalo 原生的翻译标签，p7g 里没有按消息
+  区分来源的字段，改回去会反过来错，暂时保留。
+- **Zalo 原生「更改语言」只支持越↔英互译**：服务端目前只支持这两对，
+  模块自己做了接收翻译目标语言选择，走你自己的大模型 API，不受这个限制。
+- **钱包里的 Activity（交易记录）、Card（卡）页面仍是英文**：这两个页面是 Zalo
+  服务器下发的 H5 网页，常规资源汉化碰不到；要翻得塞一套网页翻译引擎 + 上万条
+  网页词库，体积翻倍且违背「只改显示、不碰执行逻辑」的原则，故不做。
 - **少数写死在自定义控件里的文本**（如聊天列表里的「My Documents」会话名）可能漏翻，
   这类文本不走 `TextView.setText`，需要单独定位控件。遇到请提 Issue 附截图。
 
@@ -235,18 +224,38 @@ SKIP_BUILD=1 bash build/publish.sh
 
 **装了没效果？**
 九成是作用域没勾 Zalo，或改完没强制停止 Zalo。重启手机基本能解决。
-排查可看 LSPosed 日志里有没有 `[ZALO-ZH] module loaded, translations: 12637`。
+排查可看 LSPosed 日志里有没有 `[ZALO-ZH] module loaded, translations: 12697`。
+
+**消息不翻译？**
+先看设置页：桌面图标「Zalo中文增强模块设置」→ 翻译开关里「信息自动翻译」
+有没有打开；再看有没有填 API（或选了免费引擎）。点「测试当前 API」，
+成功弹「当前api配置能正常使用」说明 API 没问题；失败会直接显示原因
+（连接失败 / API 地址有误 / 找不到模型 / API 错误），按原因改就行。还不行的话，
+确认 Zalo 是不是强停重开过（模块只在进程新建时注入，覆盖装 APK 后不重启 Zalo 跑的还是旧代码）。
+
+**没有 API 密钥能用吗？**
+能。模板下拉框里选 Google 翻译 / MyMemory 这类免费引擎，不用填密钥直接用；
+或者用 bilibili 公开翻译接口（地址 `https://index-translate.bilibili.com/v1`，
+模型 `Index-Translate-35B-A3B`），密钥框空着就行。
+
+**「译」按钮翻成什么语言？**
+看「‘译’按钮默认翻译」那一节，默认越南语，改成别的就翻成别的；
+收到的消息走最上面「默认译文语言」，两边互不影响。
+
+**测试按钮报「当前api配置有误」，但 API 明明能用？**
+2.7.0 之前是 bug：设置页进程没声明联网权限，请求发不出去还一律说配置错。
+2.7.0 已补权限，失败时会直接显示原因（连接失败 / API 地址有误 / 找不到模型 / API 错误）。
 
 **切到越南语后界面还有中文？**
 不应出现。若出现，看日志里是否有 `[ZALO-ZH] vi mode detected -> translation disabled`；
 没有的话说明语言判断没生效，请提 Issue 附机型与 Zalo 版本。
 
 **会封号吗？**
-风险极低但不是零 —— 模块只改显示文本，不发修改请求、不碰服务器通信，
-跟改协议的外挂不是一回事。介意就用小号先试几天。
+风险极低但不是零 —— 模块只改显示文本和调你自己的翻译 API，不发修改请求、
+不碰服务器通信，跟改协议的外挂不是一回事。介意就用小号先试几天。
 
 **影响登录、收消息吗？**
-不影响，它只是「换皮」。
+不影响，它只是「换皮」+ 翻译显示。
 
 **有页面还是英文？**
 把页面名或截图发到 Issue，针对性补翻译。

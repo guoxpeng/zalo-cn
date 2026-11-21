@@ -1,14 +1,6 @@
 package com.zalocn;
 
-import android.app.AlarmManager;
-import android.app.AlertDialog;
-import android.app.Notification;
-import android.app.NotificationChannel;
-import android.app.NotificationManager;
-import android.app.PendingIntent;
 import android.content.Context;
-import android.content.DialogInterface;
-import android.content.Intent;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
 import android.os.Handler;
@@ -77,12 +69,9 @@ public class MessageHook {
     /** 长按菜单自定义项 id（0x7E 段，避开 Zalo 资源 id 的 0x7F 段与原生菜单 id）。 */
     static final int MENU_SHOW_ORIGINAL = 0x7E100001;
     static final int MENU_SHOW_TRANSLATED = 0x7E100002;
-    static final int MENU_ADD_REMINDER = 0x7E100003;
 
     /** 每会话保留的最近原文条数（供 AI 上下文精确翻译）。 */
     private static final int CONTEXT_SIZE = 5;
-    /** 待办提醒到期检查节流（毫秒）。 */
-    private static final long REMINDER_CHECK_INTERVAL_MS = 60000;
 
     // ---- 反射缓存（init 时解析，失败则对应功能不装） ----
     private static volatile Class<?> clsVv3;
@@ -98,9 +87,7 @@ public class MessageHook {
     private static volatile Constructor<?> ctorO7g;
     private static volatile Method mU56b;
     private static volatile int iconTranslate = 0;
-    private static volatile int iconClock = 0;
     private static volatile int colorB60 = 0;
-    private static volatile int colorR70 = 0;
     /**
      * 本机 uid：唯一可靠来源是 CoreUtility.i（ChatView.Na 用它与 vv3.c 比较
      * 判是不是自己发的；发送者字段另有 MessageId.d）。逆向文档与 jadx_out
@@ -141,8 +128,6 @@ public class MessageHook {
     private static volatile Runnable pendingIdleRun = null;
     /** 最近一次滚动的列表（弱引用；翻完一条后补翻下一批用）。 */
     private static volatile WeakReference<Object> lastRvRef = null;
-    /** 进程启动后是否已重设过未过期提醒（重启恢复用，一次即可）。 */
-    private static volatile boolean remindersRescheduled = false;
     /** 已加过自定义项的长按菜单（防重复追加）。 */
     private static final Map<Object, Boolean> menusDone =
             Collections.synchronizedMap(new WeakHashMap<Object, Boolean>());
@@ -154,7 +139,6 @@ public class MessageHook {
     /** ChatView -> 当前会话 threadId（发送侧翻译取上下文用；弱引用，视图回收即丢）。 */
     private static final Map<Object, String> threadByChatView =
             Collections.synchronizedMap(new WeakHashMap<Object, String>());
-    private static volatile long lastReminderCheck = 0;
 
     private static volatile ClassLoader zaloCl;
 
@@ -244,11 +228,8 @@ public class MessageHook {
         if (vv3 == null) {
             return;
         }
-        // 进程启动后首次绑定：重设重启后被系统清掉的未过期提醒闹钟（见
-        // maybeRescheduleReminders 的注释：恢复点只能放在 Zalo 进程内）。
-        maybeRescheduleReminders(row);
         TranslateConfig cfg = TranslateConfig.loadForHook();
-        if (!cfg.enabled || !cfg.autoIncoming) {
+        if (!cfg.enabled) {
             return;
         }
         // 接收翻译的目标语（面板全局设置，默认中文）。
@@ -313,14 +294,13 @@ public class MessageHook {
                 return;
             }
         }
-        if (!cfg.resolveForHistory().hasApi()) {
+        if (!cfg.hasApi()) {
             return;
         }
         if (listScrolling) {
             return; // 滑动中只读缓存，不发新请求；停下后由滚动监听补翻
         }
         enqueueTranslation(row, vv3, msgId, key, text, threadId, detectedLang(vv3), -1, target);
-        maybeCheckReminders(row);
     }
 
     // ============================================================
@@ -370,7 +350,7 @@ public class MessageHook {
                     inFlight.remove(keyRef); // 过期任务直接丢弃，不调 API
                     return;
                 }
-                TranslateConfig c2 = TranslateConfig.loadForHook().resolveForHistory();
+                TranslateConfig c2 = TranslateConfig.loadForHook();
                 // MyMemory 不支持 auto 检测源语：用 Zalo 自身的检测结果（detected 恒有值，取不到默认 vi）。
                 String from = "auto";
                 if (c2 != null && "mymemory".equals(c2.engine)) {
@@ -450,10 +430,10 @@ public class MessageHook {
                 return; // 已被更新的停下取代
             }
             TranslateConfig cfg = TranslateConfig.loadForHook();
-            if (!cfg.enabled || !cfg.autoIncoming) {
+            if (!cfg.enabled) {
                 return;
             }
-            if (!cfg.resolveForHistory().hasApi()) {
+            if (!cfg.hasApi()) {
                 return;
             }
             // 接收翻译的目标语（面板全局设置，默认中文）。
@@ -630,46 +610,6 @@ public class MessageHook {
         return false;
     }
 
-    /**
-     * 重启恢复：进程启动后首次绑定时，把未过期的待办提醒重新设闹钟。
-     * 提醒创建时已持久化在 Zalo 自身 prefs（TranslateStore.addReminder），
-     * 这里只重设、过期（dueAt <= now）的不再重设。
-     *
-     * 注意：BOOT_COMPLETED 接收器跑在模块自身进程（com.zalocn），读不到
-     * Zalo 私有 prefs 里的提醒数据（跨 UID + SELinux），加了也是空壳，
-     * 所以恢复点放在 Zalo 进程启动后的首次绑定——重启后首次打开 Zalo
-     * 即恢复；重启后没开过 Zalo，提醒不会响（见测试指南）。
-     */
-    private static void maybeRescheduleReminders(Object row) {
-        try {
-            if (remindersRescheduled) {
-                return;
-            }
-            remindersRescheduled = true;
-            TranslateStore st = storeFor(row);
-            if (st == null) {
-                return;
-            }
-            Context ctx = ((View) row).getContext();
-            if (ctx == null) {
-                return;
-            }
-            long now = System.currentTimeMillis();
-            int n = 0;
-            for (TranslateStore.Reminder r : st.getReminders()) {
-                if (r.dueAt > now) {
-                    scheduleReminderAlarm(ctx, r);
-                    n++;
-                }
-            }
-            if (n > 0) {
-                XposedBridge.log(TAG + " rescheduled " + n + " pending reminders after process start");
-            }
-        } catch (Throwable t) {
-            XposedBridge.log(TAG + " reschedule reminders fail: " + t);
-        }
-    }
-
     /** 异步回包应用：先核对行当前消息仍是目标消息（防 RecyclerView 复用串位）。 */
     private static void applyTranslation(Object row, Object vv3, Object msgId, String translated,
             String targetLang) throws Exception {
@@ -772,7 +712,7 @@ public class MessageHook {
     }
 
     // ============================================================
-    // 2. 长按菜单：显示原文/显示译文、设为待办提醒
+    // 2. 长按菜单：显示原文/显示译文
     // ============================================================
 
     private static void installMenuHook(final XC_LoadPackage.LoadPackageParam lpparam) throws Throwable {
@@ -790,9 +730,7 @@ public class MessageHook {
             }
         }
         iconTranslate = staticInt("lkk", "zds_ic_translator_line_32", 0);
-        iconClock = staticInt("lkk", "zds_ic_clock_1_line_32", 0);
         colorB60 = staticInt("oik", "b60", 0);
-        colorR70 = staticInt("oik", "r70", 0);
 
         // G6() 渲染前追加自定义项（X1 此时已由 w6() 填好原生项）。
         XposedHelpers.findAndHookMethod(clsMenuView, "G6",
@@ -854,10 +792,6 @@ public class MessageHook {
                 items.add(item);
             }
         }
-        Object rem = mU56b.invoke(null, MENU_ADD_REMINDER, iconClock, colorR70, "设为待办提醒");
-        if (rem != null) {
-            items.add(rem);
-        }
         if (!items.isEmpty()) {
             Object x1 = getField(menu, "X1");
             if (x1 instanceof List) {
@@ -870,8 +804,7 @@ public class MessageHook {
     /** 返回 true = 已处理，拦截原生分发。 */
     private static boolean onMenuClick(XC_MethodHook.MethodHookParam param) throws Exception {
         int id = ((Integer) param.args[0]).intValue();
-        if (id != MENU_SHOW_ORIGINAL && id != MENU_SHOW_TRANSLATED
-                && id != MENU_ADD_REMINDER) {
+        if (id != MENU_SHOW_ORIGINAL && id != MENU_SHOW_TRANSLATED) {
             return false;
         }
         Object menu = param.thisObject;
@@ -907,8 +840,6 @@ public class MessageHook {
             rebindChat(menu);
             return true;
         }
-        // 待办提醒：选时间 -> 存在模块本地。
-        showReminderDialog(menu, vv3);
         return true;
     }
 
@@ -931,62 +862,6 @@ public class MessageHook {
                 }
             }
         });
-    }
-
-    private static void showReminderDialog(final Object menu, final Object vv3) {
-        try {
-            Context ctx = ((View) menu).getContext();
-            final String text = (String) getField(vv3, "f");
-            Object msgId = getField(vv3, "b");
-            final String threadId = msgId == null ? null : (String) getField(msgId, "c");
-            final TranslateStore st = storeFor(menu);
-            if (ctx == null || text == null || st == null) {
-                return;
-            }
-            final String[] labels = {"15 分钟后", "1 小时后", "今晚 21:00", "明天 9:00"};
-            new AlertDialog.Builder(ctx)
-                    .setTitle("设为待办提醒")
-                    .setItems(labels, new DialogInterface.OnClickListener() {
-                        @Override
-                        public void onClick(DialogInterface dialog, int which) {
-                            try {
-                                long now = System.currentTimeMillis();
-                                java.util.Calendar cal = java.util.Calendar.getInstance();
-                                long due;
-                                if (which == 0) {
-                                    due = now + 15 * 60 * 1000L;
-                                } else if (which == 1) {
-                                    due = now + 60 * 60 * 1000L;
-                                } else if (which == 2) {
-                                    cal.set(java.util.Calendar.HOUR_OF_DAY, 21);
-                                    cal.set(java.util.Calendar.MINUTE, 0);
-                                    cal.set(java.util.Calendar.SECOND, 0);
-                                    due = cal.getTimeInMillis();
-                                    if (due <= now) {
-                                        due += 24 * 60 * 60 * 1000L;
-                                    }
-                                } else {
-                                    cal.add(java.util.Calendar.DAY_OF_YEAR, 1);
-                                    cal.set(java.util.Calendar.HOUR_OF_DAY, 9);
-                                    cal.set(java.util.Calendar.MINUTE, 0);
-                                    cal.set(java.util.Calendar.SECOND, 0);
-                                    due = cal.getTimeInMillis();
-                                }
-                                TranslateStore.Reminder created = st.addReminder(text, due, threadId);
-                                if (created != null) {
-                                    scheduleReminderAlarm(ctx, created);
-                                }
-                                Toast.makeText(ctx, "已设置提醒：" + labels[which], Toast.LENGTH_SHORT).show();
-                            } catch (Throwable t) {
-                                XposedBridge.log(TAG + " addReminder fail: " + t);
-                            }
-                        }
-                    })
-                    .setNegativeButton("取消", null)
-                    .show();
-        } catch (Throwable t) {
-            XposedBridge.log(TAG + " showReminderDialog fail: " + t);
-        }
     }
 
     // ============================================================
@@ -1114,12 +989,17 @@ public class MessageHook {
         XposedBridge.log(TAG + " translate button attached");
     }
 
-    /** “译”按钮点击：中文翻成越语填回输入框，不发送；发送拦截看到已填回的内容直接放行。 */
+    /** “译”按钮点击：中文翻成“‘译’按钮默认翻译”选的语言填回输入框，不发送。 */
     private static void onTranslateButtonClick(final View input, final TextView btn) {
         try {
-            TranslateConfig cfg = TranslateConfig.loadForHook();
-            if (!cfg.enabled) {
-                Toast.makeText(input.getContext(), "请先开启“启用消息翻译”", Toast.LENGTH_SHORT).show();
+            // 必须强制重读：loadForHook() 走 hasFileChanged 缓存，改完语言不一定及时跟上
+            // （之前取消勾选仍填双语就是这个缓存；这里目标语也是从缓存里取的，改完还翻越南语）。
+            TranslateConfig cfg = TranslateConfig.loadForHookFresh();
+            // “译”按钮翻成“‘译’按钮默认翻译”面板选的语言（默认越南语）；收到的消息走另一项“默认译文语言”。
+            final String target = cfg.outgoingTargetLang != null && cfg.outgoingTargetLang.length() > 0
+                    ? cfg.outgoingTargetLang : "vi";
+            if ("zh".equals(target)) {
+                Toast.makeText(input.getContext(), "默认语言就是中文，无需翻译", Toast.LENGTH_SHORT).show();
                 return;
             }
             CharSequence cs = (CharSequence) callMethod(input, "getText");
@@ -1129,11 +1009,14 @@ public class MessageHook {
                 return;
             }
             if (!containsHan(text)) {
-                Toast.makeText(input.getContext(), "输入已是越南语，无需翻译", Toast.LENGTH_SHORT).show();
+                Toast.makeText(input.getContext(),
+                        "输入已是" + TranslateConfig.targetLangName(target) + "，无需翻译",
+                        Toast.LENGTH_SHORT).show();
                 return;
             }
-            if (!cfg.hasApi()) {
-                Toast.makeText(input.getContext(), "请先在“Zalo 汉化设置”里填 API 地址和模型", Toast.LENGTH_LONG).show();
+            // 免费引擎不用填 API（hasApi 只对大模型模板有意义），别拦它。
+            if ("ai".equals(cfg.engine) && !cfg.hasApi()) {
+                Toast.makeText(input.getContext(), "请先在“Zalo中文增强模块设置”里填 API 地址和模型", Toast.LENGTH_LONG).show();
                 return;
             }
             final Object chatView = findChatViewAncestor(input);
@@ -1153,8 +1036,14 @@ public class MessageHook {
                     // “译”按钮是用户主动操作：强制重读配置，勾选改完立即生效，
                     // 不受接收路径的缓存影响（之前取消勾选仍填双语就是缓存没跟上）。
                     TranslateConfig c2 = TranslateConfig.loadForHookFresh();
+                    // 目标语必须从新读的配置里取：上面那个 target 是进方法时读的，
+                    // 后台线程重读的 c2 里才有最新的语言；之前就是这里漏了，
+                    // 改完语言还拿旧的 "vi" 去翻，所以永远只有越南语。
+                    final String target2 = c2.outgoingTargetLang != null
+                            && c2.outgoingTargetLang.length() > 0
+                            ? c2.outgoingTargetLang : "vi";
                     final String ctxStr = recentContext(threadId, text);
-                    final String vi = LlmClient.translate(c2, text, "zh", "vi", ctxStr);
+                    final String translated = LlmClient.translate(c2, text, "zh", target2, ctxStr);
                     mainHandler().post(new Runnable() {
                         @Override
                         public void run() {
@@ -1167,16 +1056,16 @@ public class MessageHook {
                                 if (!text.equals(curText)) {
                                     return; // 用户已改输入，不动
                                 }
-                                if (vi == null) {
+                                if (translated == null) {
                                     Toast.makeText(ctx, "翻译失败，请重试", Toast.LENGTH_SHORT).show();
                                     return;
                                 }
                                 TranslateConfig c3 = TranslateConfig.loadForHookFresh();
-                                String filled = c3.inputKeepOriginal ? text + "\n" + vi : vi;
+                                String filled = c3.inputKeepOriginal ? text + "\n" + translated : translated;
                                 replaceInputText(input, filled);
                                 TranslateStore st = storeFor(input);
                                 if (st != null) {
-                                    st.putCached(text, "zh", "vi", vi);
+                                    st.putCached(text, "zh", target2, translated);
                                 }
                             } catch (Throwable t) {
                                 XposedBridge.log(TAG + " translate-button apply error: " + t);
@@ -1202,124 +1091,6 @@ public class MessageHook {
             e.replace(0, e.length(), text);
         } catch (Throwable t) {
             XposedBridge.log(TAG + " replaceInputText fail: " + t);
-        }
-    }
-
-    /**
-     * 给一条提醒排精确闹钟（到点系统发广播给 ReminderReceiver 发通知）。
-     * 提醒内容放 Intent extras 里，另带校验 token（接收器核对）。
-     * 精确闹钟权限检查的是调用者（Zalo 进程）的权限，不是模块清单里的
-     * 声明：Zalo 没给精确闹钟权限时 canScheduleExactAlarms() 为 false，
-     * 直接走不精确闹钟（仍会响，但可能晚几分钟），不再靠抛异常回落。
-     */
-    static void scheduleReminderAlarm(Context ctx, TranslateStore.Reminder r) {        try {
-            if (ctx == null || r == null) {
-                return;
-            }
-            AlarmManager am = (AlarmManager) ctx.getSystemService(Context.ALARM_SERVICE);
-            if (am == null) {
-                return;
-            }
-            Intent intent = new Intent(ReminderReceiver.ACTION_REMINDER);
-            intent.setClassName("com.zalocn", "com.zalocn.ReminderReceiver");
-            intent.putExtra(ReminderReceiver.EXTRA_TEXT, r.text);
-            intent.putExtra(ReminderReceiver.EXTRA_ID, r.id);
-            // 校验 token：设置页生成，经 XSharedPreferences 同步到 Zalo 进程。
-            try {
-                String token = TranslateConfig.loadForHook().reminderToken;
-                if (token != null && token.length() > 0) {
-                    intent.putExtra(ReminderReceiver.EXTRA_TOKEN, token);
-                }
-            } catch (Throwable ignored) {
-            }
-            int requestCode = r.id == null ? 0 : r.id.hashCode();
-            PendingIntent pi = PendingIntent.getBroadcast(ctx, requestCode, intent,
-                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-            boolean canExact = true;
-            if (Build.VERSION.SDK_INT >= 31) {
-                try {
-                    canExact = am.canScheduleExactAlarms();
-                } catch (Throwable ignored) {
-                    canExact = false;
-                }
-            }
-            if (canExact) {
-                try {
-                    am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, r.dueAt, pi);
-                    return;
-                } catch (SecurityException e) {
-                    XposedBridge.log(TAG + " exact alarm denied despite canScheduleExactAlarms, fallback to inexact: " + e);
-                }
-            } else {
-                XposedBridge.log(TAG + " Zalo has no exact-alarm permission, fallback to inexact (may be minutes late)");
-            }
-            am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, r.dueAt, pi);
-        } catch (Throwable t) {
-            XposedBridge.log(TAG + " scheduleReminderAlarm fail: " + t);
-        }
-    }
-
-    // ============================================================
-    // 4. 待办提醒到期检查（在绑定时节流触发）
-    // ============================================================
-
-    /**
-     * 兜底：闹钟被拒/未触发时，有新消息绑定仍会顺带弹出已到期提醒。
-     * 正常路径靠 AlarmManager + ReminderReceiver 准时触发，不依赖这里。
-     */
-    private static void maybeCheckReminders(Object anyView) {
-        try {
-            long now = System.currentTimeMillis();
-            if (now - lastReminderCheck < REMINDER_CHECK_INTERVAL_MS) {
-                return;
-            }
-            lastReminderCheck = now;
-            TranslateStore st = storeFor(anyView);
-            if (st == null) {
-                return;
-            }
-            List<TranslateStore.Reminder> due = st.popDueReminders(now);
-            if (due.isEmpty()) {
-                return;
-            }
-            Context ctx = ((View) anyView).getContext();
-            for (TranslateStore.Reminder r : due) {
-                try {
-                    Toast.makeText(ctx, "待办提醒：" + r.text, Toast.LENGTH_LONG).show();
-                    postReminderNotification(ctx, r.text);
-                } catch (Throwable ignored) {
-                }
-            }
-        } catch (Throwable t) {
-            XposedBridge.log(TAG + " maybeCheckReminders error: " + t);
-        }
-    }
-
-    private static void postReminderNotification(Context ctx, String text) {
-        try {
-            NotificationManager nm = (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
-            if (nm == null) {
-                return;
-            }
-            String channelId = "zalocn_reminder";
-            if (Build.VERSION.SDK_INT >= 26) {
-                NotificationChannel ch = new NotificationChannel(
-                        channelId, "Zalo 汉化待办提醒", NotificationManager.IMPORTANCE_DEFAULT);
-                nm.createNotificationChannel(ch);
-            }
-            Notification.Builder b;
-            if (Build.VERSION.SDK_INT >= 26) {
-                b = new Notification.Builder(ctx, channelId);
-            } else {
-                b = new Notification.Builder(ctx);
-            }
-            b.setSmallIcon(android.R.drawable.ic_dialog_info)
-                    .setContentTitle("Zalo 汉化 · 待办提醒")
-                    .setContentText(text)
-                    .setAutoCancel(true);
-            nm.notify((int) (System.currentTimeMillis() & 0x7fffffff), b.build());
-        } catch (Throwable t) {
-            XposedBridge.log(TAG + " postReminderNotification fail: " + t);
         }
     }
 

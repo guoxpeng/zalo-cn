@@ -22,6 +22,11 @@ public class LlmClient {
 
     static final String TAG = "[ZALO-ZH]";
 
+    /** 最近一次翻译失败的原因（供设置页“测试当前 API”显示真实原因，Zalo 进程里不读它）。
+     * LlmClient 从不抛异常，只返回 null；不记原因的话，调用方分不清是配置错、
+     * 网络不通还是 API 报错，只能一律说“配置有误”（之前测试按钮的误判就是这么来的）。 */
+    static String lastError = null;
+
     /** 一次翻译调用的超时（毫秒）：连接 10 秒、读取 30 秒。 */
     private static final int CONNECT_TIMEOUT_MS = 10000;
     private static final int READ_TIMEOUT_MS = 30000;
@@ -41,11 +46,17 @@ public class LlmClient {
         if (cfg == null || text == null || text.trim().length() == 0) {
             return null;
         }
+        lastError = null;
         // 免费网页翻译引擎：不走大模型 API，不用密钥、不读地址/模型。
         if (cfg.engine != null && !"ai".equals(cfg.engine)) {
-            return FreeTranslateClient.translate(cfg.engine, text, fromLang, toLang);
+            String r = FreeTranslateClient.translate(cfg.engine, text, fromLang, toLang);
+            if (r == null) {
+                lastError = "免费引擎翻译失败，请检查网络";
+            }
+            return r;
         }
         if (!cfg.hasApi()) {
+            lastError = "未填 API 地址或模型";
             return null;
         }
         HttpURLConnection conn = null;
@@ -113,25 +124,34 @@ public class LlmClient {
             String resp = readAll(is);
             if (code < 200 || code >= 300) {
                 XposedBridge.log(TAG + " LLM HTTP " + code + ": " + safeHead(resp));
+                lastError = classifyHttpError(code, resp, cfg.model);
                 return null;
             }
             JSONObject obj = new JSONObject(resp);
             JSONArray choices = obj.optJSONArray("choices");
             if (choices == null || choices.length() == 0) {
+                lastError = "API 返回内容为空";
                 return null;
             }
             JSONObject msg = choices.optJSONObject(0).optJSONObject("message");
             if (msg == null) {
+                lastError = "API 返回内容为空";
                 return null;
             }
             String out = msg.optString("content", null);
             if (out == null) {
+                lastError = "API 返回内容为空";
                 return null;
             }
             out = out.trim();
-            return out.length() == 0 ? null : out;
+            if (out.length() == 0) {
+                lastError = "API 返回内容为空";
+                return null;
+            }
+            return out;
         } catch (Throwable t) {
             XposedBridge.log(TAG + " LLM translate fail: " + t);
+            lastError = classifyNetworkError(t);
             return null;
         } finally {
             if (conn != null) {
@@ -141,6 +161,49 @@ public class LlmClient {
                 }
             }
         }
+    }
+
+    /** HTTP 报错分类：先看是不是模型名不对，再看是不是地址不对，其他一律算 API 错误。
+     * 测试按钮直接显示这里的结果，不再一律说“配置有误”。 */
+    private static String classifyHttpError(int code, String resp, String model) {
+        String body = resp != null ? resp.toLowerCase() : "";
+        // 模型名不对：OpenAI 兼容接口通常在 404/400 里写 model not found / does not exist
+        if (body.contains("model") && (body.contains("not found") || body.contains("does not exist")
+                || body.contains("unknown model") || body.contains("invalid model")
+                || body.contains("no such model"))) {
+            return "找不到模型 " + model + "：请检查模型名称是否写对";
+        }
+        if (code == 404) {
+            return "API 地址有误：接口返回 404，请检查 API 地址";
+        }
+        if (code == 401 || code == 403) {
+            return "API 错误：HTTP " + code + "（密钥可能不对或无权限）";
+        }
+        return "API 错误：HTTP " + code + "（" + safeHead(resp) + "）";
+    }
+
+    /** 网络异常分类：连接失败 / 地址有误 / 其他。 */
+    private static String classifyNetworkError(Throwable t) {
+        String msg = t.getMessage() != null ? t.getMessage() : "";
+        if (t instanceof java.net.UnknownHostException) {
+            return "API 地址有误：域名解析失败（" + msg + "）";
+        }
+        if (t instanceof java.net.MalformedURLException) {
+            return "API 地址有误：地址格式不对（" + msg + "）";
+        }
+        if (t instanceof java.net.SocketTimeoutException) {
+            return "连接失败：连接超时（" + msg + "）";
+        }
+        if (t instanceof java.net.ConnectException) {
+            return "连接失败：服务器连不上（" + msg + "）";
+        }
+        if (t instanceof SecurityException) {
+            return "连接失败：没有联网权限（" + msg + "）";
+        }
+        if (t instanceof java.io.IOException) {
+            return "连接失败：" + msg;
+        }
+        return "网络请求失败：" + t;
     }
 
     private static String readAll(InputStream is) throws Exception {
