@@ -23,7 +23,6 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import java.util.List;
 
 /**
  * 翻译功能设置界面（模块 APK 自带的启动器入口）。
@@ -45,7 +44,6 @@ public class TranslateSettingsActivity extends Activity {
     private CheckBox cbAutoIncoming;
     private CheckBox cbAutoOutgoing;
     private CheckBox cbReviewBeforeSend;
-    private EditText etPhrases;
     private EditText etCustomPrompt;
     private CheckBox cbInputKeepOriginal;
     private TextView tvStatus;
@@ -54,13 +52,6 @@ public class TranslateSettingsActivity extends Activity {
 
     /** 通知权限请求码（安卓 13+ 提醒通知要运行时申请）。 */
     private static final int REQ_POST_NOTIFICATIONS = 1001;
-
-    private static final String DEFAULT_PHRASES =
-            "你好|Xin chào\n" +
-            "谢谢|Cảm ơn\n" +
-            "请问多少钱？|Cho hỏi giá bao nhiêu?\n" +
-            "请稍等，我确认一下|Xin đợi một chút, để tôi kiểm tra\n" +
-            "好的，没问题|Được, không vấn đề gì";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -94,14 +85,6 @@ public class TranslateSettingsActivity extends Activity {
         etHistApiKey = addField(root, "历史翻译 API 密钥（空=用上面）", "");
         etHistApiKey.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
         etHistModel = addField(root, "历史翻译模型（空=用上面）", "");
-
-        addTitle(root, "快捷短语");
-        addHint(root, "每行一条，格式：中文 | 越南语。越南语留空时，插入时按配置现翻。点输入框长按可调出短语。");
-        etPhrases = new EditText(this);
-        etPhrases.setMinLines(5);
-        etPhrases.setGravity(Gravity.TOP);
-        root.addView(etPhrases, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         addTitle(root, "翻译提示词与“译”按钮");
         addHint(root, "提示词会追加到每次翻译的系统提示词后，用来纠正直译错误（例如：地名按越南官方译名，不要直译；人名保留原文）。留空则不用。");
@@ -210,12 +193,6 @@ public class TranslateSettingsActivity extends Activity {
         cbAutoIncoming.setChecked(cfg.autoIncoming);
         cbAutoOutgoing.setChecked(cfg.autoOutgoing);
         cbReviewBeforeSend.setChecked(cfg.reviewBeforeSend);
-        List<String[]> phrases = cfg.phrases;
-        if (phrases == null || phrases.isEmpty()) {
-            etPhrases.setText(DEFAULT_PHRASES);
-        } else {
-            etPhrases.setText(TranslateConfig.joinPhrases(phrases));
-        }
         etCustomPrompt.setText(cfg.customPrompt);
         cbInputKeepOriginal.setChecked(cfg.inputKeepOriginal);
         // 首次打开设置页即生成提醒校验 token（之后 ReminderReceiver 强制校验）。
@@ -239,7 +216,6 @@ public class TranslateSettingsActivity extends Activity {
         cfg.autoIncoming = cbAutoIncoming.isChecked();
         cfg.autoOutgoing = cbAutoOutgoing.isChecked();
         cfg.reviewBeforeSend = cbReviewBeforeSend.isChecked();
-        cfg.phrases = TranslateConfig.parsePhrases(etPhrases.getText().toString());
         cfg.customPrompt = etCustomPrompt.getText().toString().trim();
         cfg.inputKeepOriginal = cbInputKeepOriginal.isChecked();
         if (cfg.reminderToken == null || cfg.reminderToken.length() == 0) {

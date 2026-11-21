@@ -1056,19 +1056,6 @@ public class MessageHook {
                         }
                     }
                 });
-        XposedHelpers.findAndHookMethod(clsChatInputBar, "onLongClick", View.class,
-                new XC_MethodHook() {
-                    @Override
-                    protected void beforeHookedMethod(MethodHookParam param) {
-                        try {
-                            if (onSendLongClick(param)) {
-                                param.setResult(Boolean.TRUE);
-                            }
-                        } catch (Throwable t) {
-                            XposedBridge.log(TAG + " onSendLongClick error: " + t);
-                        }
-                    }
-                });
         XposedBridge.log(TAG + " ChatInputBar send hooks installed, sendBtnId=" + sendBtnId);
     }
 
@@ -1083,7 +1070,45 @@ public class MessageHook {
         if (clsChatView == null) {
             clsChatView = Class.forName("com.zing.zalo.ui.chat.ChatView", false, cl);
         }
-        Class<?> clsInputBar = Class.forName("com.zing.zalo.ui.chat.widget.inputbar.ChatInputBar", false, cl);
+        if (clsChatInputBar == null) {
+            clsChatInputBar = Class.forName("com.zing.zalo.ui.chat.widget.inputbar.ChatInputBar", false, cl);
+        }
+        final Class<?> clsInputBar = clsChatInputBar;
+        // 主路径：构造完字段（a/i/q）就挂按钮，不依赖 attach 时机。
+        // 构造签名含混淆类型（z34/s64/nh7），按参数个数（5 个）找构造方法直接 hook。
+        try {
+            Constructor<?> target = null;
+            for (Constructor<?> c : clsInputBar.getDeclaredConstructors()) {
+                if (c.getParameterTypes().length == 5) {
+                    target = c;
+                    break;
+                }
+            }
+            if (target != null) {
+                // 构造方法的参数类型从反射拿到，直接传给 findAndHookConstructor。
+                Class<?>[] ptypes = target.getParameterTypes();
+                Object[] hookArgs = new Object[ptypes.length + 1];
+                for (int k = 0; k < ptypes.length; k++) {
+                    hookArgs[k] = ptypes[k];
+                }
+                hookArgs[ptypes.length] = new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) {
+                        try {
+                            attachTranslateButton(param.thisObject);
+                        } catch (Throwable t) {
+                            XposedBridge.log(TAG + " attachTranslateButton error: " + t);
+                        }
+                    }
+                };
+                XposedHelpers.findAndHookConstructor(clsInputBar, hookArgs);
+            } else {
+                XposedBridge.log(TAG + " translate button: no 5-arg ctor found");
+            }
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + " translate button ctor hook fail: " + t);
+        }
+        // 兜底：attach 时再挂一次（构造 hook 万一没命中时补上；靠表去重）。
         XposedHelpers.findAndHookMethod(clsInputBar, "onAttachedToWindow",
                 new XC_MethodHook() {
                     @Override
@@ -1101,6 +1126,10 @@ public class MessageHook {
     /** 输入栏挂上后加一个“译”字按钮（只加一次；进出会话重复 attach 时靠表去重）。 */
     private static void attachTranslateButton(Object bar) throws Exception {
         if (bar == null || translateBtnDone.containsKey(bar)) {
+            return;
+        }
+        // onAttachedToWindow 是从 View 继承的方法，hook 会对所有 View 触发；只处理 ChatInputBar。
+        if (clsChatInputBar != null && !clsChatInputBar.isInstance(bar)) {
             return;
         }
         Object container = getField(bar, "a");   // FrameLayout 行容器
@@ -1152,6 +1181,7 @@ public class MessageHook {
             }
         });
         translateBtnDone.put(bar, Boolean.TRUE);
+        XposedBridge.log(TAG + " translate button attached");
     }
 
     /** “译”按钮点击：中文翻成越语填回输入框，不发送；发送拦截看到已填回的内容直接放行。 */
@@ -1373,91 +1403,6 @@ public class MessageHook {
             }
         });
         return true;
-    }
-
-    /** 长按发送键 -> 快捷短语选择框（返回 true = 已处理）。 */
-    private static boolean onSendLongClick(XC_MethodHook.MethodHookParam param) throws Exception {
-        View view = (View) param.args[0];
-        if (view.getId() != sendBtnId) {
-            return false;
-        }
-        TranslateConfig cfg = TranslateConfig.loadForHook();
-        if (!cfg.enabled || cfg.phrases == null || cfg.phrases.isEmpty()) {
-            return false;
-        }
-        final Object chatView = findChatViewAncestor(view);
-        if (chatView == null) {
-            return false;
-        }
-        final Object edit = getField(chatView, "U1");
-        if (edit == null) {
-            return false;
-        }
-        final Context ctx = view.getContext();
-        final List<String[]> phrases = cfg.phrases;
-        String[] labels = new String[phrases.size()];
-        for (int i = 0; i < phrases.size(); i++) {
-            labels[i] = phrases.get(i)[0];
-        }
-        new AlertDialog.Builder(ctx)
-                .setTitle("快捷短语（点一下插入输入框）")
-                .setItems(labels, new DialogInterface.OnClickListener() {
-                    @Override
-                    public void onClick(DialogInterface dialog, int which) {
-                        try {
-                            final String[] ph = phrases.get(which);
-                            String vi = ph.length > 1 ? ph[1] : "";
-                            if (vi != null && vi.length() > 0) {
-                                insertIntoInput(edit, vi);
-                                return;
-                            }
-                            // 越语为空：现翻再插。
-                            final String zh = ph[0];
-                            Toast.makeText(ctx, "正在翻译短语…", Toast.LENGTH_SHORT).show();
-                            TRANSLATE_POOL.execute(new Runnable() {
-                                @Override
-                                public void run() {
-                                    TranslateConfig c2 = TranslateConfig.loadForHook();
-                                    String phCtx = recentContext(threadByChatView.get(chatView), zh);
-                                    final String tr = LlmClient.translate(c2, zh, "zh", "vi", phCtx);
-                                    mainHandler().post(new Runnable() {
-                                        @Override
-                                        public void run() {
-                                            if (tr != null) {
-                                                insertIntoInput(edit, tr);
-                                            } else {
-                                                Toast.makeText(ctx, "翻译失败", Toast.LENGTH_SHORT).show();
-                                            }
-                                        }
-                                    });
-                                }
-                            });
-                        } catch (Throwable t) {
-                            XposedBridge.log(TAG + " phrase insert fail: " + t);
-                        }
-                    }
-                })
-                .setNegativeButton("取消", null)
-                .show();
-        return true;
-    }
-
-    /** 光标处插入（直接改 Editable，不走 setText，避免触发汉化 hook 误翻）。 */
-    private static void insertIntoInput(Object edit, String text) {
-        try {
-            android.text.Editable e = (android.text.Editable) callMethod(edit, "getText");
-            int pos = 0;
-            try {
-                pos = ((Integer) callMethod(edit, "getSelectionStart")).intValue();
-            } catch (Throwable ignored) {
-            }
-            if (pos < 0 || pos > e.length()) {
-                pos = e.length();
-            }
-            e.insert(pos, text);
-        } catch (Throwable t) {
-            XposedBridge.log(TAG + " insertIntoInput fail: " + t);
-        }
     }
 
     /** 整段替换输入框内容（直接改 Editable，不走 setText）。 */

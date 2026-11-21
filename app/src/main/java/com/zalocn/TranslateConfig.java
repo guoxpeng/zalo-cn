@@ -8,9 +8,7 @@ import org.xmlpull.v1.XmlPullParser;
 
 import java.io.File;
 import java.io.FileInputStream;
-import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -77,9 +75,6 @@ public class TranslateConfig {
     public String histApiKey = "";
     public String histModel = "";
 
-    /** 快捷短语：每条 "中文" 或 "中文|越语"（越语为空时发送时现翻）。 */
-    public List<String[]> phrases = new ArrayList<String[]>();
-
     /**
      * 待办提醒校验 token（设置页生成的随机值）。
      * Zalo 进程设闹钟时把它放进 PendingIntent extras，ReminderReceiver 核对
@@ -129,7 +124,6 @@ public class TranslateConfig {
         c.histBaseUrl = src.histBaseUrl;
         c.histApiKey = src.histApiKey;
         c.histModel = src.histModel;
-        c.phrases = src.phrases;
         c.reminderToken = src.reminderToken;
         return c;
     }
@@ -216,7 +210,6 @@ public class TranslateConfig {
         cfg.histBaseUrl = nonEmpty(kv.get("histBaseUrl"), "");
         cfg.histApiKey = nonEmpty(kv.get("histApiKey"), "");
         cfg.histModel = nonEmpty(kv.get("histModel"), "");
-        cfg.phrases = parsePhrases(kv.get("phrases"));
         cfg.reminderToken = nonEmpty(kv.get("reminderToken"), "");
         return cfg;
     }
@@ -238,7 +231,6 @@ public class TranslateConfig {
             cfg.histBaseUrl = nonEmpty(sp.getString("histBaseUrl", null), "");
             cfg.histApiKey = nonEmpty(sp.getString("histApiKey", null), "");
             cfg.histModel = nonEmpty(sp.getString("histModel", null), "");
-            cfg.phrases = parsePhrases(sp.getString("phrases", ""));
             cfg.reminderToken = sp.getString("reminderToken", "");
         } catch (Throwable t) {
             XposedBridge.log(TAG + " load settings config fail: " + t);
@@ -303,7 +295,6 @@ public class TranslateConfig {
             ed.putString("histBaseUrl", histBaseUrl);
             ed.putString("histApiKey", histApiKey);
             ed.putString("histModel", histModel);
-            ed.putString("phrases", joinPhrases(phrases));
             ed.putString("reminderToken", reminderToken);
             ed.commit();
         } catch (Throwable t) {
@@ -350,43 +341,6 @@ public class TranslateConfig {
             }
         }
         return kv;
-    }
-
-    /** 短语序列化：每行 "中文|越语"（越语可空）。 */
-    public static String joinPhrases(List<String[]> phrases) {
-        StringBuilder sb = new StringBuilder();
-        for (String[] ph : phrases) {
-            if (sb.length() > 0) {
-                sb.append('\n');
-            }
-            sb.append(ph[0]);
-            sb.append('|');
-            if (ph.length > 1 && ph[1] != null) {
-                sb.append(ph[1]);
-            }
-        }
-        return sb.toString();
-    }
-
-    public static List<String[]> parsePhrases(String raw) {
-        List<String[]> out = new ArrayList<String[]>();
-        if (raw == null || raw.length() == 0) {
-            return out;
-        }
-        String[] lines = raw.split("\n");
-        for (String line : lines) {
-            line = line.trim();
-            if (line.length() == 0) {
-                continue;
-            }
-            int sep = line.indexOf('|');
-            if (sep >= 0) {
-                out.add(new String[]{line.substring(0, sep).trim(), line.substring(sep + 1).trim()});
-            } else {
-                out.add(new String[]{line, ""});
-            }
-        }
-        return out;
     }
 
     static String nonEmpty(String v, String def) {
