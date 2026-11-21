@@ -205,6 +205,11 @@ public class MainHook implements IXposedHookLoadPackage {
         hookTextGetter(Resources.class, "getText", int.class, Resources.Theme.class);
         hookTextGetter(Resources.class, "getString", int.class);
 
+        // 2.7.0 消息实时翻译（第一批 6 个功能）：ChatRow.setMessage 注入译文、
+        // 长按菜单切换原文/译文/待办、发送键自动翻中文为越语、长按发送键调快捷短语。
+        // 各子 hook 内部各自 try/catch，失败不影响汉化 hook。
+        MessageHook.install(lpparam);
+
         // LSPosed 资源钩子开启时应用内 Resources 实为 XResources，其覆写了 getText/getQuantityText，
         // 基础类 hook 不会命中，需同时对 XResources 挂钩（类存在时才会命中，无副作用）。
         try {

@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.zalocn"
-    android:versionCode="17"
-    android:versionName="2.6.1">
+    android:versionCode="18"
+    android:versionName="2.7.0">
 
     <uses-sdk android:minSdkVersion="27" android:targetSdkVersion="34" />
 
@@ -16,12 +16,22 @@
             android:value="true" />
         <meta-data
             android:name="xposeddescription"
-            android:value="Zalo 界面汉化：将 Zalo 英文/越南语界面翻译为简体中文（纯 UI 字符串替换，不改网络与账号数据）" />
+            android:value="Zalo 界面汉化 + 消息实时翻译：将 Zalo 英文/越南语界面翻译为简体中文（纯 UI 字符串替换，不改网络与账号数据）；消息翻译走用户自填的大模型 API" />
         <meta-data
             android:name="xposedminversion"
             android:value="82" />
         <meta-data
             android:name="xposedscope"
             android:value="com.zing.zalo" />
+
+        <activity
+            android:name="com.zalocn.TranslateSettingsActivity"
+            android:label="Zalo 汉化设置"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
     </application>
 </manifest>
