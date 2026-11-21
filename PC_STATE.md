@@ -160,3 +160,16 @@ ZALOPC_WAIT_IDLE=0 python auto_patch.py   # Zalo 运行时不等退出，只生�
 | 2026-09-27 | Zalo 自动更新至 26.9.10，词库增至 6309 条、内联 1238 组，全量重跑流水线；新增 `05_force_promo_zh.py` 强制 zCloud 推广弹窗走本地中文（绕服务端远端覆盖）；修正 Profile 误译为「个人资料」；打包替换安装验证；文档更新并推送 pc-zh |
 | 2026-09-27 | Zalo 自动更新至 26.9.10 覆盖汉化。按 §四 重打：解包新版、更新 03/05 哈希常量、01→02（仅 26 条新词条）→03→05→04，6309/6309 全汉化、1238 组内嵌双语、65 原生文件校验一致；替换安装后修正 `STR_ACCOUNT_MENU`（轮廓→个人资料）；新增 `05_force_promo_zh.py` 解决 zCloud 推广弹窗被服务端远端配置覆盖仍显示越南语的问题（4 文件 12 处 getter 去除远端取值）；成品 `work/dist_v2/app_zh.asar` |
 | 2026-11-17 | **诊断「汉化未生效」**：Zalo 已自动更新至 26.11.12（经 26.10.20），汉化包仍在 26.9.10 目录，运行的是新版原版 asar。**适配 26.11.12**：脚本全面去硬编码（03 chunk/inline 动态探测、04 版本自动探测、05 内容特征扫描），全量重打 6475/6475 全汉化、1267 处内嵌替换、70 原生文件字节一致、推广弹窗 12 处修正；替换安装成功（8 进程正常）。**新增自动方案**：`auto_patch.py` 检测/重打/替换引擎 + `watch_zh.vbs` 开机守护 + Startup 自启项，更新后自动重打无需人工。踩坑记录：raw 旧 chunk 致 01 断言失败、shutil.rmtree 触发 safe-delete 闸、原生文件 65→70、启动必须走 explorer.exe |
+| 2026-11-21 | **翻译注入 v1.0.0**（`work/translate/`）：在汉化版 app.asar 上加实时翻译，听（收消息自动翻成中文，原文在上、译文在下框）+ 说（输入框边「译」按钮，中文翻成越南语填回输入框，不自动发）。注入脚本 `zalocn-translate.js`（语法已验；bilibili API 主 + Google 兜底；bilibili 回 `access-control-allow-origin: *`，渲染器可直调，不用 preload 桥；消息选择器 `.chat-item.to-me`+`data-qId` 缓存；输入框是 ProseMirror，用 execCommand 填回）。补丁进 asar 已验证（文件一致、原生文件 untouched）。安装器 `install-translate.ps1`（备份→解包→加脚本→重打包→替换→重启，重复跑先恢复再重打）+ `restore-translate.ps1` 一键恢复。**附带发现**：Zalo PC 自带完整 AI 翻译功能（60 条 STR_AI_TRANS 词条 + 独立语言模型 chunk；收消息自动翻 + 打字提示翻译 + 每会话设置；语言对含中文简体；自动翻译可能要 zCloud 套餐），老郭 21:49 明确“别管其他人，我要我自己的”，故做注入。等实机测试反馈再调（译文位置/按钮位置/文字提取可能要改）。 |
+
+---
+
+## 七、翻译注入（2026-11-21，v1.0.0 原型）
+
+位置：`work/translate/`（`zalocn-translate.js` + `install-translate.ps1` + `restore-translate.ps1` + `README.md`）。
+
+- 原理：往 `pc-dist/compact-app.html` 加 `<script src="zalocn-translate.js">`；主聊天页无 CSP，脚本可直调 bilibili API（CORS `*`）。
+- 听：MutationObserver 看 `.chat-item.to-me`，`data-qId` 做缓存键；译文插在原文下面（带蓝边的框）。
+- 说：往 `.normal-buttons-group` 插「译」按钮；ProseMirror 输入框用 `execCommand('insertText')` 填回，不自动发。
+- 配置：默认收→中文简体、译按钮→越南语、bilibili API（免密钥）；改目标语言目前改 `zalocn-translate.js` 里的 DEFAULTS。
+- 安装器在**现有汉化版** app.asar 上打补丁（汉化词条不动）；Zalo 更新后重跑一次即可。
