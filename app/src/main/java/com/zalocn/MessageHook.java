@@ -896,7 +896,7 @@ public class MessageHook {
             if (am == null) {
                 return;
             }
-            Intent intent = new Intent();
+            Intent intent = new Intent(ReminderReceiver.ACTION_REMINDER);
             intent.setClassName("com.zalocn", "com.zalocn.ReminderReceiver");
             intent.putExtra(ReminderReceiver.EXTRA_TEXT, r.text);
             intent.putExtra(ReminderReceiver.EXTRA_ID, r.id);

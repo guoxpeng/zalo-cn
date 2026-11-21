@@ -20,6 +20,8 @@ import de.robv.android.xposed.XposedBridge;
 public class ReminderReceiver extends BroadcastReceiver {
 
     static final String TAG = "[ZALO-ZH]";
+    /** 只有带这个 Action 的广播才处理（闹钟 PendingIntent 里会写上）。 */
+    static final String ACTION_REMINDER = "com.zalocn.ACTION_REMINDER";
     static final String EXTRA_TEXT = "text";
     static final String EXTRA_ID = "id";
     static final String CHANNEL_ID = "zalocn_reminder";
@@ -27,7 +29,7 @@ public class ReminderReceiver extends BroadcastReceiver {
     @Override
     public void onReceive(Context context, Intent intent) {
         try {
-            if (intent == null) {
+            if (intent == null || !ACTION_REMINDER.equals(intent.getAction())) {
                 return;
             }
             String text = intent.getStringExtra(EXTRA_TEXT);

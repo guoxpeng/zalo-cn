@@ -48,8 +48,13 @@
              注意：exported=false 意味着只有同 UID 才能触发；闹钟由 Zalo 进程
              排期、经系统送达，真机必须验证到点是否真响——若被系统拦截，
              需改 exported=true（另加权限保护）才能用。 -->
+        <!-- 待办提醒接收器：必须 exported=true——闹钟 PendingIntent 由 Zalo 进程创建，
+             目标是另一个 App（com.zalocn）的组件；exported=false 时系统会按“非导出组件”
+             拒收（创建者 UID 与目标 UID 不同）。风险：任意 App 也能发同 Action 广播，
+             最坏情况只是伪造一条提醒通知（onReceive 只认 ACTION_REMINDER 且只发通知，
+             不读不写任何数据），可接受。 -->
         <receiver
             android:name="com.zalocn.ReminderReceiver"
-            android:exported="false" />
+            android:exported="true" />
     </application>
 </manifest>
