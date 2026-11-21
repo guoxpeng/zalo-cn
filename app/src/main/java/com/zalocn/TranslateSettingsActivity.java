@@ -44,8 +44,6 @@ public class TranslateSettingsActivity extends Activity {
     private EditText etHistModel;
     private CheckBox cbEnabled;
     private CheckBox cbAutoIncoming;
-    private CheckBox cbAutoOutgoing;
-    private CheckBox cbReviewBeforeSend;
     private Spinner spTargetLang;
     private EditText etCustomPrompt;
     private CheckBox cbInputKeepOriginal;
@@ -72,17 +70,22 @@ public class TranslateSettingsActivity extends Activity {
         addTitle(root, "Zalo 汉化 · 翻译设置");
         addHint(root, "翻译走你自己填的大模型 API（OpenAI 兼容接口）。配置存在模块自身 prefs，LSPosed 重定向后仅 Zalo 进程可读，普通 App 读不到；API 密钥只发往你自己填的 API 地址。全部收到的消息与上下文会发到你填的 API 地址，用中转服务的话中转方能看到所有聊天内容。");
 
+        addTitle(root, "翻译引擎");
         etBaseUrl = addField(root, "API 地址", "例如 https://api.openai.com/v1");
         etApiKey = addField(root, "API 密钥", "sk-…（免密钥的公开 API 可空着）");
         etApiKey.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
         etModel = addField(root, "模型", "例如 gpt-4o-mini");
+        addHint(root, "提示词会追加到每次翻译的系统提示词后，用来纠正直译错误（例如：地名按越南官方译名，不要直译；人名保留原文）。留空则不用。");
+        etCustomPrompt = new EditText(this);
+        etCustomPrompt.setMinLines(3);
+        etCustomPrompt.setGravity(Gravity.TOP);
+        etCustomPrompt.setHint("例如：地名用越南官方译名，不要直译；胡志明市、河内、大叻、保禄……");
+        root.addView(etCustomPrompt, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
+        addTitle(root, "接收翻译");
         cbEnabled = addCheck(root, "启用消息翻译");
         cbAutoIncoming = addCheck(root, "收到外语消息，自动翻译");
-        cbAutoOutgoing = addCheck(root, "发出中文消息，自动翻成越语再发");
-        cbReviewBeforeSend = addCheck(root, "发送前先检查译文（译文填回输入框，确认后点发送）");
-
-        addTitle(root, "接收翻译目标语言");
         addHint(root, "收到的消息翻成哪种语言（默认中文）。新消息保存后立即按新语言翻；已显示的旧消息重进会话后按新语言重翻。");
         spTargetLang = new Spinner(this);
         String[] targetNames = new String[TranslateConfig.TARGET_LANGS.length];
@@ -96,23 +99,17 @@ public class TranslateSettingsActivity extends Activity {
         root.addView(spTargetLang, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
+        addTitle(root, "输入框“译”按钮");
+        addHint(root, "输入中文后点输入框边的“译”，翻成越语填回输入框，不自动发；检查后自己点发送。发送时模块不再拦截、不再自动翻译。");
+        cbInputKeepOriginal = addCheck(root, "“译”按钮同时保留中文原文（中文一行 + 越南语一行）");
+        addHint(root, "勾选：点“译”后输入框里是中文原文一行 + 越南语译文一行；不勾：只填越南语译文。");
+
         addTitle(root, "历史记录翻译（可选）");
-        addHint(root, "接收/历史翻译用这里，输入框发送用上面的主配置。某一项空着就用上面对应的项，三项都空=完全用主配置。");
+        addHint(root, "接收/历史翻译用这里，输入框“译”按钮用上面的主配置。某一项空着就用上面对应的项，三项都空=完全用主配置。");
         etHistBaseUrl = addField(root, "历史翻译 API 地址（空=用上面）", "");
         etHistApiKey = addField(root, "历史翻译 API 密钥（空=用上面）", "");
         etHistApiKey.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
         etHistModel = addField(root, "历史翻译模型（空=用上面）", "");
-
-        addTitle(root, "翻译提示词与“译”按钮");
-        addHint(root, "提示词会追加到每次翻译的系统提示词后，用来纠正直译错误（例如：地名按越南官方译名，不要直译；人名保留原文）。留空则不用。");
-        etCustomPrompt = new EditText(this);
-        etCustomPrompt.setMinLines(3);
-        etCustomPrompt.setGravity(Gravity.TOP);
-        etCustomPrompt.setHint("例如：地名用越南官方译名，不要直译；胡志明市、河内、大叻、保禄……");
-        root.addView(etCustomPrompt, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        cbInputKeepOriginal = addCheck(root, "“译”按钮同时保留中文原文（中文一行 + 越南语一行）");
-        addHint(root, "勾选：点“译”后输入框里是中文原文一行 + 越南语译文一行；不勾：只填越南语译文。两种都不会被发送拦截重复翻译，点发送直接发出去。");
 
         addTitle(root, "待办提醒");
         addHint(root, "精确闹钟取决于 Zalo 有没有精确闹钟权限（系统设置 → 应用 → Zalo → 闹钟与提醒）；没给的话提醒仍会响，但可能晚几分钟。提醒通知由本模块发，需要下面的通知权限。重启手机后，首次打开 Zalo 会自动重设未过期的提醒。");
@@ -220,8 +217,6 @@ public class TranslateSettingsActivity extends Activity {
         etHistModel.setText(cfg.histModel);
         cbEnabled.setChecked(cfg.enabled);
         cbAutoIncoming.setChecked(cfg.autoIncoming);
-        cbAutoOutgoing.setChecked(cfg.autoOutgoing);
-        cbReviewBeforeSend.setChecked(cfg.reviewBeforeSend);
         spTargetLang.setSelection(indexOfTargetLang(cfg.incomingTargetLang));
         etCustomPrompt.setText(cfg.customPrompt);
         cbInputKeepOriginal.setChecked(cfg.inputKeepOriginal);
@@ -244,8 +239,6 @@ public class TranslateSettingsActivity extends Activity {
         }
         cfg.enabled = cbEnabled.isChecked();
         cfg.autoIncoming = cbAutoIncoming.isChecked();
-        cfg.autoOutgoing = cbAutoOutgoing.isChecked();
-        cfg.reviewBeforeSend = cbReviewBeforeSend.isChecked();
         int targetPos = spTargetLang.getSelectedItemPosition();
         if (targetPos >= 0 && targetPos < TranslateConfig.TARGET_LANGS.length) {
             cfg.incomingTargetLang = TranslateConfig.TARGET_LANGS[targetPos][0];
@@ -271,7 +264,7 @@ public class TranslateSettingsActivity extends Activity {
         } else {
             sb.append("状态：已配置 ").append(cfg.model).append("，")
               .append(cfg.autoIncoming ? "收到的自动翻成" + TranslateConfig.targetLangName(cfg.incomingTargetLang) + "；" : "收到的不自动翻；")
-              .append(cfg.autoOutgoing ? "发出的中文自动翻成越语。" : "发出的不自动翻。");
+              .append("发出：输入框点“译”翻译后自己点发送。");
         }
         // 通知权限：提醒通知由模块自身进程发，安卓 13+ 没权限到点不显示。
         boolean notifOn = areNotificationsEnabled();

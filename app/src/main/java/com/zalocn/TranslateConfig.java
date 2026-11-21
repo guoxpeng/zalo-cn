@@ -56,14 +56,10 @@ public class TranslateConfig {
     public String baseUrl = DEFAULT_BASE_URL;
     public String apiKey = "";
     public String model = DEFAULT_MODEL;
-    /** 收到越语消息自动翻译成中文。 */
+    /** 收到外语消息自动翻译（目标语见 incomingTargetLang）。 */
     public boolean autoIncoming = true;
-    /** 发出中文消息自动翻成越语再发（有“发送前先检查译文”兜底，默认开）。 */
-    public boolean autoOutgoing = true;
     /** 翻译开关总闸。 */
     public boolean enabled = true;
-    /** 发送前先检查译文：译文填回输入框，确认后点发送（默认开）。 */
-    public boolean reviewBeforeSend = true;
     /** 自定义翻译提示词：追加到每次翻译的系统提示词后（如地名按越南官方译名、
      *  不要直译人名地名）。空 = 不用。 */
     public String customPrompt = "";
@@ -138,9 +134,7 @@ public class TranslateConfig {
         c.apiKey = src.apiKey;
         c.model = src.model;
         c.autoIncoming = src.autoIncoming;
-        c.autoOutgoing = src.autoOutgoing;
         c.enabled = src.enabled;
-        c.reviewBeforeSend = src.reviewBeforeSend;
         c.customPrompt = src.customPrompt;
         c.inputKeepOriginal = src.inputKeepOriginal;
         c.incomingTargetLang = src.incomingTargetLang;
@@ -226,8 +220,6 @@ public class TranslateConfig {
         cfg.model = nonEmpty(kv.get("model"), DEFAULT_MODEL);
         cfg.enabled = !"false".equals(kv.get("enabled"));
         cfg.autoIncoming = !"false".equals(kv.get("autoIncoming"));
-        cfg.autoOutgoing = !"false".equals(kv.get("autoOutgoing"));
-        cfg.reviewBeforeSend = !"false".equals(kv.get("reviewBeforeSend"));
         cfg.customPrompt = nonEmpty(kv.get("customPrompt"), "");
         cfg.inputKeepOriginal = !"false".equals(kv.get("inputKeepOriginal"));
         cfg.incomingTargetLang = nonEmpty(kv.get("incomingTargetLang"), "zh");
@@ -248,8 +240,6 @@ public class TranslateConfig {
             cfg.model = nonEmpty(sp.getString("model", null), DEFAULT_MODEL);
             cfg.enabled = sp.getBoolean("enabled", true);
             cfg.autoIncoming = sp.getBoolean("autoIncoming", true);
-            cfg.autoOutgoing = sp.getBoolean("autoOutgoing", true);
-            cfg.reviewBeforeSend = sp.getBoolean("reviewBeforeSend", true);
             cfg.customPrompt = nonEmpty(sp.getString("customPrompt", null), "");
             cfg.inputKeepOriginal = sp.getBoolean("inputKeepOriginal", true);
             cfg.incomingTargetLang = nonEmpty(sp.getString("incomingTargetLang", null), "zh");
@@ -313,8 +303,6 @@ public class TranslateConfig {
             ed.putString("model", model);
             ed.putBoolean("enabled", enabled);
             ed.putBoolean("autoIncoming", autoIncoming);
-            ed.putBoolean("autoOutgoing", autoOutgoing);
-            ed.putBoolean("reviewBeforeSend", reviewBeforeSend);
             ed.putString("customPrompt", customPrompt);
             ed.putBoolean("inputKeepOriginal", inputKeepOriginal);
             ed.putString("incomingTargetLang", incomingTargetLang);

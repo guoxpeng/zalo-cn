@@ -78,7 +78,6 @@ public class MessageHook {
     static final int MENU_SHOW_ORIGINAL = 0x7E100001;
     static final int MENU_SHOW_TRANSLATED = 0x7E100002;
     static final int MENU_ADD_REMINDER = 0x7E100003;
-    static final int MENU_REMEMBER_LANG = 0x7E100004;
 
     /** 每会话保留的最近原文条数（供 AI 上下文精确翻译）。 */
     private static final int CONTEXT_SIZE = 5;
@@ -98,7 +97,6 @@ public class MessageHook {
     private static volatile Constructor<?> ctorP7g;
     private static volatile Constructor<?> ctorO7g;
     private static volatile Method mU56b;
-    private static volatile int sendBtnId = -1;
     private static volatile int iconTranslate = 0;
     private static volatile int iconClock = 0;
     private static volatile int colorB60 = 0;
@@ -107,7 +105,7 @@ public class MessageHook {
      * 本机 uid：唯一可靠来源是 CoreUtility.i（ChatView.Na 用它与 vv3.c 比较
      * 判是不是自己发的；发送者字段另有 MessageId.d）。逆向文档与 jadx_out
      * 里没有更可靠的自身 uid 来源，也没有 vv3 的方向/是否自己发的标志字段，
-     * 所以获取链只有这一环；拿不到时靠下方的发送回显启发式兜底。
+     * 所以获取链只有这一环；拿不到时该条不做自发判定（直接按收到处理）。
      */
     private static volatile String selfUid;
 
@@ -120,21 +118,6 @@ public class MessageHook {
     private static final ExecutorService TRANSLATE_POOL = Executors.newFixedThreadPool(3);
     /** 同时在途的翻译请求上限：超过时本次不发起，等用户滚动回来重新绑定时再触发。 */
     private static final int MAX_IN_FLIGHT = 8;
-    /** 正在自动发送中的 ChatView 身份（防 performClick 循环；只在自动重发路径使用）。 */
-    private static final Set<Integer> sendingGuards = Collections.synchronizedSet(new HashSet<Integer>());
-    /** 正在执行自动重发的瞬间标志（performClick 同步重入时放行，区别于用户连点）。 */
-    private static final Set<Integer> resending =
-            Collections.synchronizedSet(new HashSet<Integer>());
-    /** 检查路径下已填入输入框、待用户确认发送的译文（按 ChatView 身份记）。 */
-    private static final Map<Integer, String> reviewedFilled =
-            Collections.synchronizedMap(new HashMap<Integer, String>());
-    /** 最近发出的文本（发送侧记下，接收侧回显判定用；60 秒过期）。 */
-    private static final List<SentEcho> recentSent =
-            Collections.synchronizedList(new ArrayList<SentEcho>());
-    private static final long SENT_ECHO_TTL_MS = 60000;
-    /** 检查模式下正在翻译中的 ChatView 身份（防连点：翻译中再点发送直接吞掉）。 */
-    private static final Set<Integer> translatingSends =
-            Collections.synchronizedSet(new HashSet<Integer>());
     /** 已挂上“译”按钮的输入栏（防重复加按钮；弱引用，输入栏回收即丢）。 */
     private static final Map<Object, Boolean> translateBtnDone =
             Collections.synchronizedMap(new WeakHashMap<Object, Boolean>());
@@ -186,11 +169,6 @@ public class MessageHook {
             installMenuHook(lpparam);
         } catch (Throwable t) {
             XposedBridge.log(TAG + " installMenuHook fail: " + t);
-        }
-        try {
-            installSendHook(lpparam);
-        } catch (Throwable t) {
-            XposedBridge.log(TAG + " installSendHook fail: " + t);
         }
         try {
             installTranslateButton(lpparam);
@@ -327,12 +305,6 @@ public class MessageHook {
         if (selfUid != null && selfUid.length() > 0 && selfUid.equals(sender)) {
             return;
         }
-        // 启发式兜底：拿不到 selfUid 时，自己刚发出的译文回到列表里会被当成
-        // 收到的消息；发送侧记下的文本在 60 秒内原样出现，即判定为自己消息
-        // 的回显，跳过翻译。
-        if (isSelfEcho(text)) {
-            return;
-        }
         // 缓存命中：before-hook 阶段注入，绑定布局直接按译文算。
         if (st != null) {
             String cached = st.getCached(text, "auto", target);
@@ -402,11 +374,6 @@ public class MessageHook {
                 String translated = LlmClient.translate(c2, textRef, "auto", targetLang, context);
                 if (translated != null && store != null) {
                     store.putCached(textRef, "auto", targetLang, translated);
-                    if (threadRef != null && store.getContactLang(threadRef) == null) {
-                        // 只在没有记录时自动记为越语；手动设过的（中文/越语）不动，
-                        // 否则对方偶尔发句越语就会把“不翻译”覆盖掉。
-                        store.setContactLang(threadRef, "vi");
-                    }
                 }
                 final String result = translated;
                 mainHandler().post(new Runnable() {
@@ -516,9 +483,6 @@ public class MessageHook {
                         continue;
                     }
                     if (selfUid != null && selfUid.length() > 0 && selfUid.equals(info.sender)) {
-                        continue;
-                    }
-                    if (isSelfEcho(info.text)) {
                         continue;
                     }
                     if (st != null) {
@@ -889,20 +853,6 @@ public class MessageHook {
         if (rem != null) {
             items.add(rem);
         }
-        // 记住对方语言：在“中文/越语”之间切换该会话的记录（标签显示切换后的目标）。
-        TranslateStore menuStore = storeFor(menu);
-        String langThread = null;
-        Object menuMsgId = getField(vv3, "b");
-        if (menuMsgId != null) {
-            langThread = (String) getField(menuMsgId, "c");
-        }
-        String curLang = (menuStore != null && langThread != null)
-                ? menuStore.getContactLang(langThread) : null;
-        String langLabel = "zh".equals(curLang) ? "记住对方语言：越语" : "记住对方语言：中文";
-        Object langItem = mU56b.invoke(null, MENU_REMEMBER_LANG, iconTranslate, colorB60, langLabel);
-        if (langItem != null) {
-            items.add(langItem);
-        }
         if (!items.isEmpty()) {
             Object x1 = getField(menu, "X1");
             if (x1 instanceof List) {
@@ -916,7 +866,7 @@ public class MessageHook {
     private static boolean onMenuClick(XC_MethodHook.MethodHookParam param) throws Exception {
         int id = ((Integer) param.args[0]).intValue();
         if (id != MENU_SHOW_ORIGINAL && id != MENU_SHOW_TRANSLATED
-                && id != MENU_ADD_REMINDER && id != MENU_REMEMBER_LANG) {
+                && id != MENU_ADD_REMINDER) {
             return false;
         }
         Object menu = param.thisObject;
@@ -950,22 +900,6 @@ public class MessageHook {
                 st.setHidden(key, false);
             }
             rebindChat(menu);
-            return true;
-        }
-        if (id == MENU_REMEMBER_LANG) {
-            Object mId = getField(vv3, "b");
-            String thread = mId == null ? null : (String) getField(mId, "c");
-            if (st != null && thread != null) {
-                Context mctx = ((View) menu).getContext();
-                String cur = st.getContactLang(thread);
-                if ("zh".equals(cur)) {
-                    st.setContactLang(thread, "vi");
-                    Toast.makeText(mctx, "已记为对方说越语", Toast.LENGTH_SHORT).show();
-                } else {
-                    st.setContactLang(thread, "zh");
-                    Toast.makeText(mctx, "已记为对方说中文，发出时不再自动翻译", Toast.LENGTH_SHORT).show();
-                }
-            }
             return true;
         }
         // 待办提醒：选时间 -> 存在模块本地。
@@ -1051,36 +985,7 @@ public class MessageHook {
     }
 
     // ============================================================
-    // 3. 发送侧：中文自动翻成越语再发；长按发送键调快捷短语
-    // ============================================================
-
-    private static void installSendHook(final XC_LoadPackage.LoadPackageParam lpparam) throws Throwable {
-        final ClassLoader cl = lpparam.classLoader;
-        clsChatView = Class.forName("com.zing.zalo.ui.chat.ChatView", false, cl);
-        clsChatInputBar = Class.forName("com.zing.zalo.ui.chat.widget.inputbar.ChatInputBar", false, cl);
-        sendBtnId = staticInt("glk", "new_chat_input_btn_chat_send", -1);
-        if (sendBtnId < 0) {
-            XposedBridge.log(TAG + " send button id not found, send hook disabled");
-            return;
-        }
-        XposedHelpers.findAndHookMethod(clsChatInputBar, "onClick", View.class,
-                new XC_MethodHook() {
-                    @Override
-                    protected void beforeHookedMethod(MethodHookParam param) {
-                        try {
-                            if (onBeforeSendClick(param)) {
-                                param.setResult(null);
-                            }
-                        } catch (Throwable t) {
-                            XposedBridge.log(TAG + " onBeforeSendClick error: " + t);
-                        }
-                    }
-                });
-        XposedBridge.log(TAG + " ChatInputBar send hooks installed, sendBtnId=" + sendBtnId);
-    }
-
-    // ============================================================
-    // 4. 输入框边“译”按钮：点按把中文翻成越语填回输入框，不自动发送
+    // 3. 输入框边“译”按钮：点按把中文翻成越语填回输入框，不自动发送
     //    （WATransChat 式样：翻译先在输入框里看得见、改得了，发送就是普通一次点击，
     //    模块不再拦截、不后台代发，从根上规避错发。）
     // ============================================================
@@ -1262,10 +1167,6 @@ public class MessageHook {
                                 TranslateConfig c3 = TranslateConfig.loadForHook();
                                 String filled = c3.inputKeepOriginal ? text + "\n" + vi : vi;
                                 replaceInputText(input, filled);
-                                // 记为已检查过的填回内容：发送拦截看到它直接放行，不再重复翻译。
-                                if (chatView != null) {
-                                    reviewedFilled.put(Integer.valueOf(System.identityHashCode(chatView)), filled);
-                                }
                                 TranslateStore st = storeFor(input);
                                 if (st != null) {
                                     st.putCached(text, "zh", "vi", vi);
@@ -1285,144 +1186,6 @@ public class MessageHook {
     private static int dp(Context ctx, int v) {
         return (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v,
                 ctx.getResources().getDisplayMetrics());
-    }
-
-    /** 返回 true = 吞掉这次点击（等翻译完再重发）。 */
-    private static boolean onBeforeSendClick(XC_MethodHook.MethodHookParam param) throws Exception {
-        View view = (View) param.args[0];
-        if (view.getId() != sendBtnId) {
-            return false;
-        }
-        TranslateConfig cfg = TranslateConfig.loadForHook();
-        if (!cfg.enabled || !cfg.autoOutgoing) {
-            return false;
-        }
-        Object chatView = findChatViewAncestor(view);
-        if (chatView == null) {
-            return false;
-        }
-        int guardKey = System.identityHashCode(chatView);
-        // 自动重发（performClick 同步重入）：直接放行。必须先于防连点检查，
-        // 否则重发会被自己的守卫吞掉。
-        if (resending.contains(Integer.valueOf(guardKey))) {
-            return false;
-        }
-        // 防连点：翻译中用户再点发送，直接吞掉（不重复请求）。
-        if (translatingSends.contains(Integer.valueOf(guardKey))) {
-            Toast.makeText(view.getContext(), "正在翻译，请稍候…", Toast.LENGTH_SHORT).show();
-            return true;
-        }
-        if (sendingGuards.contains(guardKey)) {
-            return false; // 翻译后重发的点击，直接放行（兼容旧路径）
-        }
-        final TranslateStore st = storeFor(view);
-        // 同语不译：该会话对方语言记为中文时，发出中文直接发，不翻译。
-        String sendThreadId = threadByChatView.get(chatView);
-        if (st != null && sendThreadId != null && "zh".equals(st.getContactLang(sendThreadId))) {
-            return false;
-        }
-        Object edit = getField(chatView, "U1");
-        if (edit == null) {
-            return false;
-        }
-        CharSequence cs = (CharSequence) callMethod(edit, "getText");
-        final String text = cs == null ? "" : cs.toString();
-        if (text.trim().length() == 0) {
-            return false;
-        }
-        // 用户已确认过的译文（检查路径填回的）：即使译文里还留着汉字（如人名），
-        // 也是用户看过的内容，直接放行，不再重复翻译。
-        String filled = reviewedFilled.get(Integer.valueOf(guardKey));
-        if (filled != null && filled.equals(text)) {
-            reviewedFilled.remove(Integer.valueOf(guardKey));
-            recordSentText(text);
-            return false;
-        }
-        if (!containsHan(text)) {
-            recordSentText(text);
-            return false;
-        }
-        if (st != null) {
-            String cached = st.getCached(text, "zh", "vi");
-            if (cached != null) {
-                replaceInputText(edit, cached);
-                if (cfg.reviewBeforeSend) {
-                    // 检查路径：译文填回输入框，等用户自己点发送。
-                    reviewedFilled.put(Integer.valueOf(guardKey), cached);
-                    Toast.makeText(view.getContext(), "译文已填入输入框，请检查后点发送", Toast.LENGTH_SHORT).show();
-                    return true;
-                }
-                recordSentText(cached);
-                return false; // 检查关着：直接放行，发送越语
-            }
-        }
-        if (!cfg.hasApi()) {
-            recordSentText(text);
-            return false; // 没配 API，原文照发
-        }
-        // 检查路径不加 guard（不自动重发）；只在自动重发路径（开关关时）用 guard。
-        // 防连点守卫两种路径都要加：翻译中再点发送直接吞掉，翻译完才放开。
-        final boolean autoResend = !cfg.reviewBeforeSend;
-        if (autoResend) {
-            sendingGuards.add(guardKey);
-        }
-        translatingSends.add(Integer.valueOf(guardKey));
-        Toast.makeText(view.getContext(), "正在翻译成越语…", Toast.LENGTH_SHORT).show();
-        final View sendBtn = view;
-        final Object editRef = edit;
-        final Object chatViewRef = chatView;
-        final int guardKeyRef = guardKey;
-        TRANSLATE_POOL.execute(new Runnable() {
-            @Override
-            public void run() {
-                TranslateConfig c2 = TranslateConfig.loadForHook();
-                final String sendCtx = recentContext(threadByChatView.get(chatViewRef), text);
-                final String translated = LlmClient.translate(c2, text, "zh", "vi", sendCtx);
-                mainHandler().post(new Runnable() {
-                    @Override
-                    public void run() {
-                        try {
-                            sendingGuards.remove(Integer.valueOf(System.identityHashCode(chatViewRef)));
-                            CharSequence cur = (CharSequence) callMethod(editRef, "getText");
-                            String curText = cur == null ? "" : cur.toString();
-                            if (!text.equals(curText)) {
-                                // 用户已改输入，不再替发
-                                return;
-                            }
-                            if (translated != null) {
-                                if (store != null) {
-                                    store.putCached(text, "zh", "vi", translated);
-                                }
-                                replaceInputText(editRef, translated);
-                                if (autoResend) {
-                                    recordSentText(translated);
-                                    resending.add(Integer.valueOf(guardKeyRef));
-                                    try {
-                                        sendBtn.performClick();
-                                    } finally {
-                                        resending.remove(Integer.valueOf(guardKeyRef));
-                                    }
-                                } else {
-                                    // 检查路径：译文填回输入框，等用户自己点发送。
-                                    reviewedFilled.put(Integer.valueOf(guardKeyRef), translated);
-                                    Toast.makeText(sendBtn.getContext(), "译文已填入输入框，请检查后点发送", Toast.LENGTH_SHORT).show();
-                                }
-                            } else {
-                                // 翻译失败：绝不发中文原文，只 Toast，原文留在输入框等用户处理。
-                                Toast.makeText(sendBtn.getContext(), "翻译失败，已保留原文，请检查后发送", Toast.LENGTH_SHORT).show();
-                            }
-                        } catch (Throwable t) {
-                            XposedBridge.log(TAG + " send-after-translate error: " + t);
-                            sendingGuards.remove(Integer.valueOf(System.identityHashCode(chatViewRef)));
-                        } finally {
-                            // 防连点守卫任何出口都要放开（含用户已改输入、异常）。
-                            translatingSends.remove(Integer.valueOf(guardKeyRef));
-                        }
-                    }
-                });
-            }
-        });
-        return true;
     }
 
     /** 整段替换输入框内容（直接改 Editable，不走 setText）。 */
@@ -1687,57 +1450,6 @@ public class MessageHook {
             sb.append(s);
         }
         return sb.length() == 0 ? null : sb.toString();
-    }
-
-    /** 最近发出的一条文本（带发出时间，供回显判定）。 */
-    private static class SentEcho {
-        final String text;
-        final long at;
-
-        SentEcho(String text, long at) {
-            this.text = text;
-            this.at = at;
-        }
-    }
-
-    /** 发送侧记下刚发出的文本（译文或原文都记；回显判定时只看 60 秒内）。 */
-    private static void recordSentText(String text) {
-        if (text == null || text.length() == 0) {
-            return;
-        }
-        long now = System.currentTimeMillis();
-        synchronized (recentSent) {
-            Iterator<SentEcho> it = recentSent.iterator();
-            while (it.hasNext()) {
-                if (now - it.next().at > SENT_ECHO_TTL_MS) {
-                    it.remove();
-                }
-            }
-            while (recentSent.size() >= 10) {
-                recentSent.remove(0);
-            }
-            recentSent.add(new SentEcho(text, now));
-        }
-    }
-
-    /** 文本是否与 60 秒内发出的某条一致（是 = 自己消息的回显）。 */
-    private static boolean isSelfEcho(String text) {
-        if (text == null || text.length() == 0) {
-            return false;
-        }
-        long now = System.currentTimeMillis();
-        synchronized (recentSent) {
-            Iterator<SentEcho> it = recentSent.iterator();
-            while (it.hasNext()) {
-                SentEcho e = it.next();
-                if (now - e.at > SENT_ECHO_TTL_MS) {
-                    it.remove();
-                } else if (e.text.equals(text)) {
-                    return true;
-                }
-            }
-        }
-        return false;
     }
 
     /** 是否含汉字（CJK 统一表意文字区）。 */

@@ -176,30 +176,6 @@ public class TranslateStore {
         }
     }
 
-    // ---- 按联系人的语言偏好 ----
-
-    public String getContactLang(String contactKey) {
-        if (contactKey == null) {
-            return null;
-        }
-        try {
-            return sp.getString("lang:" + contactKey, null);
-        } catch (Throwable t) {
-            return null;
-        }
-    }
-
-    public void setContactLang(String contactKey, String lang) {
-        if (contactKey == null || lang == null) {
-            return;
-        }
-        try {
-            sp.edit().putString("lang:" + contactKey, lang).apply();
-        } catch (Throwable t) {
-            XposedBridge.log(TAG + " setContactLang fail: " + t);
-        }
-    }
-
     // ---- 待办提醒 ----
 
     public static class Reminder {
