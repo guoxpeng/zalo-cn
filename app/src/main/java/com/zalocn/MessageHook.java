@@ -54,8 +54,10 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
  *   hook 对气泡正文无效。
  * - 混淆类都在默认包（无包名）：vv3 / p7g / o7g / mm4 / glk / lkk / oik / xt3 / u56
  *   等，Class.forName 用裸名；jadx 显示的 "defpackage" 只是反编译器的合成包名。
- * - Zalo 自带原生翻译：译文以 p7g 对象挂在消息 vv3.o3 上；I2() 读 N0() 显示译文主文 +
- *   原文抽屉。模块注入自己的译文走同一槽位，不碰原文 vv3.f、不改布局缓存 n7/E7/A7。
+ * - Zalo 自带原生翻译：译文以 p7g 对象挂在消息 vv3.o3 上；I2() 读 N0()，有译文时主文本
+ *   显示译文、原文进抽屉。模块在 I2() 之后把 n7/w7 对调，改成原文主文 + 译文进抽屉
+ *   （原文在上、译文在下）。模块注入自己的译文走同一槽位，不碰原文 vv3.f；
+ *   对调只改行上的 n7/w7/x7/s7/r7，不改消息对象。
  * - 翻译是异步的：回包时必须核对行当前消息 id（row.getMessage().b），行已被复用就丢弃。
  * - 长按菜单项是公开 ArrayList（MessageContextMenuView.X1），被按消息在 V1。
  * - 输入框是 ChatView.U1（ActionEditText）；发送键在 ChatInputBar，id 为
@@ -218,6 +220,25 @@ public class MessageHook {
                     }
                 });
         XposedBridge.log(TAG + " ChatRow.setMessage hook installed");
+
+        // 原文在上、译文在下：原生 I2() 的逻辑是“有译文时主文本 = 译文、抽屉 = 原文”，
+        // 用户要的是反过来。在 I2() 算完之后、z2() 建布局之前把 n7/w7 对调。
+        // I2() 每次重算都从 N0()/B2() 读新值，对调幂等；f2() 调 I2() 在先、i2()/z2() 建布局在后，
+        // 同一次绑定内一定赶得上。
+        Class<?> clsChatRowHasCaption = Class.forName(
+                "com.zing.zalo.ui.chat.chatrow.ChatRowHasCaption", false, cl);
+        XposedHelpers.findAndHookMethod(clsChatRowHasCaption, "I2",
+                new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) {
+                        try {
+                            swapTranslationLayout(param.thisObject);
+                        } catch (Throwable t) {
+                            XposedBridge.log(TAG + " swapTranslationLayout error: " + t);
+                        }
+                    }
+                });
+        XposedBridge.log(TAG + " ChatRowHasCaption.I2 hook installed");
     }
 
     private static void onBeforeSetMessage(XC_MethodHook.MethodHookParam param) throws Exception {
@@ -670,6 +691,34 @@ public class MessageHook {
         callMethod(row, "setMessage", vv3);
     }
 
+    /**
+     * 原文在上、译文在下：I2() 算完后 n7 = 译文（主文本）、w7 = 原文（进抽屉），
+     * 这里对调成 n7 = 原文、w7 = 译文。x7 是按原文算出的 span 段落，套到译文上会错位，
+     * 抽屉缓存 s7/r7 是按旧 w7 建的，都清掉让抽屉按译文重建。q7 保持为译文
+     * （ChatRowHasCaption.L() 靠它判断译文是否变了）；o7 不变（n7 仍非空）。
+     * 无译文时 u7 为 false，直接返回；“隐藏译文”（o3.c=false）时 N0() 为 null，
+     * I2() 走无译文分支，同样不动，只显示原文。
+     */
+    private static void swapTranslationLayout(Object row) throws Exception {
+        if (row == null) {
+            return;
+        }
+        Boolean u7 = (Boolean) getField(row, "u7");
+        if (u7 == null || !u7.booleanValue()) {
+            return;
+        }
+        String n7 = (String) getField(row, "n7"); // 译文
+        String w7 = (String) getField(row, "w7"); // 原文
+        if (n7 == null || w7 == null) {
+            return;
+        }
+        setField(row, "n7", w7);
+        setField(row, "w7", n7);
+        setField(row, "x7", null);
+        setField(row, "s7", null);
+        setField(row, "r7", null);
+    }
+
     /** 注入译文到原生槽位 vv3.o3（p7g），不碰原文 vv3.f。 */
     private static void injectTranslation(Object vv3, String translated, String detected) throws Exception {
         HashMap<String, Object> map = new HashMap<String, Object>();
@@ -792,9 +841,10 @@ public class MessageHook {
         boolean shown = hasTranslation(vv3);
         List<Object> items = new ArrayList<Object>();
         if (o3 != null) {
-            // 有译文对象：显示中 -> 给“显示原文”；被隐藏 -> 给“显示译文”。
+            // 显示布局已改为“原文在上、译文在下”：译文显示中 -> 给“隐藏译文”
+            // （点后 o3.c=false，只显示原文）；被隐藏 -> 给“显示译文”。
             int id = shown ? MENU_SHOW_ORIGINAL : MENU_SHOW_TRANSLATED;
-            String label = shown ? "显示原文" : "显示译文";
+            String label = shown ? "隐藏译文" : "显示译文";
             Object item = mU56b.invoke(null, id, iconTranslate, colorB60, label);
             if (item != null) {
                 items.add(item);
