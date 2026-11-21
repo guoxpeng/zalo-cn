@@ -145,6 +145,27 @@ public class TranslateConfig {
         return c;
     }
 
+    /** 强制重读配置（不走缓存；“译”按钮、测试按钮这类用户主动操作用，保证读到最新保存值）。 */
+    public static TranslateConfig loadForHookFresh() {
+        try {
+            if (!xspTried) {
+                loadForHook(); // 还没建过 xsp：先走一次正常加载把它建起来
+            }
+            if (xsp != null) {
+                xsp.reload();
+                cached = fromXsp(xsp);
+                cachedMtime = -1;
+                return cached;
+            }
+            // xsp 不可用：清掉文件缓存后走文件路径重读
+            cachedMtime = -1;
+            cached = null;
+            return loadForHook();
+        } catch (Throwable t) {
+            return cached != null ? cached : new TranslateConfig();
+        }
+    }
+
     /** Zalo 进程侧读取配置（XSharedPreferences + hasFileChanged/reload 缓存）。 */
     public static TranslateConfig loadForHook() {
         try {

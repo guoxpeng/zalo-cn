@@ -1145,7 +1145,9 @@ public class MessageHook {
             TRANSLATE_POOL.execute(new Runnable() {
                 @Override
                 public void run() {
-                    TranslateConfig c2 = TranslateConfig.loadForHook();
+                    // “译”按钮是用户主动操作：强制重读配置，勾选改完立即生效，
+                    // 不受接收路径的缓存影响（之前取消勾选仍填双语就是缓存没跟上）。
+                    TranslateConfig c2 = TranslateConfig.loadForHookFresh();
                     final String ctxStr = recentContext(threadId, text);
                     final String vi = LlmClient.translate(c2, text, "zh", "vi", ctxStr);
                     mainHandler().post(new Runnable() {
@@ -1164,7 +1166,7 @@ public class MessageHook {
                                     Toast.makeText(ctx, "翻译失败，请重试", Toast.LENGTH_SHORT).show();
                                     return;
                                 }
-                                TranslateConfig c3 = TranslateConfig.loadForHook();
+                                TranslateConfig c3 = TranslateConfig.loadForHookFresh();
                                 String filled = c3.inputKeepOriginal ? text + "\n" + vi : vi;
                                 replaceInputText(input, filled);
                                 TranslateStore st = storeFor(input);

@@ -49,6 +49,7 @@ public class TranslateSettingsActivity extends Activity {
     private CheckBox cbInputKeepOriginal;
     private TextView tvStatus;
     private Button btnNotif;
+    private Button btnTestApi;
     private TranslateConfig lastCfg;
 
     /** 通知权限请求码（安卓 13+ 提醒通知要运行时申请）。 */
@@ -68,25 +69,28 @@ public class TranslateSettingsActivity extends Activity {
         setContentView(scroll);
 
         addTitle(root, "Zalo 汉化 · 翻译设置");
-        addHint(root, "翻译走你自己填的大模型 API（OpenAI 兼容接口）。配置存在模块自身 prefs，LSPosed 重定向后仅 Zalo 进程可读，普通 App 读不到；API 密钥只发往你自己填的 API 地址。全部收到的消息与上下文会发到你填的 API 地址，用中转服务的话中转方能看到所有聊天内容。");
+        addHint(root, "翻译走你自己填的大模型 API，密钥只发往你填的地址；收到的消息与上下文会发到该地址。");
+
+        addTitle(root, "翻译开关");
+        cbEnabled = addCheck(root, "启用消息翻译");
+        cbAutoIncoming = addCheck(root, "收到外语消息，自动翻译");
+        addHint(root, "打开后，别人发来的消息会在原文下方多一行译文。");
 
         addTitle(root, "翻译引擎");
         etBaseUrl = addField(root, "API 地址", "例如 https://api.openai.com/v1");
         etApiKey = addField(root, "API 密钥", "sk-…（免密钥的公开 API 可空着）");
         etApiKey.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
         etModel = addField(root, "模型", "例如 gpt-4o-mini");
-        addHint(root, "提示词会追加到每次翻译的系统提示词后，用来纠正直译错误（例如：地名按越南官方译名，不要直译；人名保留原文）。留空则不用。");
+        addHint(root, "自定义大模型 API（OpenAI 兼容接口）。");
         etCustomPrompt = new EditText(this);
-        etCustomPrompt.setMinLines(3);
+        etCustomPrompt.setMinLines(2);
         etCustomPrompt.setGravity(Gravity.TOP);
-        etCustomPrompt.setHint("例如：地名用越南官方译名，不要直译；胡志明市、河内、大叻、保禄……");
+        etCustomPrompt.setHint("翻译提示词（可选）：例如地名用越南官方译名，不要直译");
         root.addView(etCustomPrompt, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        addTitle(root, "接收翻译");
-        cbEnabled = addCheck(root, "启用消息翻译");
-        cbAutoIncoming = addCheck(root, "收到外语消息，自动翻译");
-        addHint(root, "收到的消息翻成哪种语言（默认中文）。新消息保存后立即按新语言翻；已显示的旧消息重进会话后按新语言重翻。");
+        addTitle(root, "译文语言");
+        addHint(root, "把收到的消息翻译成");
         spTargetLang = new Spinner(this);
         String[] targetNames = new String[TranslateConfig.TARGET_LANGS.length];
         for (int i = 0; i < targetNames.length; i++) {
@@ -98,21 +102,21 @@ public class TranslateSettingsActivity extends Activity {
         spTargetLang.setAdapter(targetAdapter);
         root.addView(spTargetLang, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        addHint(root, "新消息立即按新语言翻；已显示的旧消息重进会话后重翻。");
 
         addTitle(root, "输入框“译”按钮");
-        addHint(root, "输入中文后点输入框边的“译”，翻成越语填回输入框，不自动发；检查后自己点发送。发送时模块不再拦截、不再自动翻译。");
-        cbInputKeepOriginal = addCheck(root, "“译”按钮同时保留中文原文（中文一行 + 越南语一行）");
-        addHint(root, "勾选：点“译”后输入框里是中文原文一行 + 越南语译文一行；不勾：只填越南语译文。");
+        cbInputKeepOriginal = addCheck(root, "同时保留中文原文");
+        addHint(root, "勾选：点“译”后输入框里是中文一行 + 越南语一行；不勾只填越南语。填好后自己检查再点发送。");
 
         addTitle(root, "历史记录翻译（可选）");
-        addHint(root, "接收/历史翻译用这里，输入框“译”按钮用上面的主配置。某一项空着就用上面对应的项，三项都空=完全用主配置。");
         etHistBaseUrl = addField(root, "历史翻译 API 地址（空=用上面）", "");
         etHistApiKey = addField(root, "历史翻译 API 密钥（空=用上面）", "");
         etHistApiKey.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
         etHistModel = addField(root, "历史翻译模型（空=用上面）", "");
+        addHint(root, "某一项空着就用上面对应的项，三项都空=完全用主配置。");
 
         addTitle(root, "待办提醒");
-        addHint(root, "精确闹钟取决于 Zalo 有没有精确闹钟权限（系统设置 → 应用 → Zalo → 闹钟与提醒）；没给的话提醒仍会响，但可能晚几分钟。提醒通知由本模块发，需要下面的通知权限。重启手机后，首次打开 Zalo 会自动重设未过期的提醒。");
+        addHint(root, "提醒到点弹窗，需要通知权限；重启手机后首次打开 Zalo 会自动重设未过期的提醒。");
 
         tvStatus = new TextView(this);
         tvStatus.setPadding(0, dp(12), 0, 0);
@@ -130,6 +134,19 @@ public class TranslateSettingsActivity extends Activity {
         root.addView(btnNotif, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
+        addTitle(root, "调试");
+        btnTestApi = new Button(this);
+        btnTestApi.setText("测试当前 API");
+        btnTestApi.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                testApi();
+            }
+        });
+        root.addView(btnTestApi, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        addHint(root, "点一下会用当前 API 翻一句测试文本，成功显示译文，失败显示原因。");
+
         Button btnSave = new Button(this);
         btnSave.setText("保存");
         btnSave.setOnClickListener(new View.OnClickListener() {
@@ -144,6 +161,7 @@ public class TranslateSettingsActivity extends Activity {
         root.addView(btnSave, lp);
 
         load();
+        attachAutoSave();
 
         // 提醒通知由模块自身进程发：安卓 13+ 必须运行时申请通知权限，
         // 没权限到点什么都不显示。只在未授权时申请一次；用户拒绝后靠
@@ -226,7 +244,96 @@ public class TranslateSettingsActivity extends Activity {
         refreshStatus(cfg);
     }
 
+    /**
+     * 勾选/下拉改完立即保存（不用再翻到底点保存；文字框失焦时也保存）。
+     * 必须在 load() 之后挂，否则 load() 里的 setChecked/setSelection
+     * 会触发监听，把还没填好的值写回去。
+     */
+    private void attachAutoSave() {
+        android.widget.CompoundButton.OnCheckedChangeListener autoSaveCheck =
+                new android.widget.CompoundButton.OnCheckedChangeListener() {
+                    @Override
+                    public void onCheckedChanged(android.widget.CompoundButton b, boolean c) {
+                        saveQuietly();
+                    }
+                };
+        cbEnabled.setOnCheckedChangeListener(autoSaveCheck);
+        cbAutoIncoming.setOnCheckedChangeListener(autoSaveCheck);
+        cbInputKeepOriginal.setOnCheckedChangeListener(autoSaveCheck);
+        spTargetLang.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(android.widget.AdapterView<?> p, View v, int pos, long id) {
+                saveQuietly();
+            }
+
+            @Override
+            public void onNothingSelected(android.widget.AdapterView<?> p) {
+            }
+        });
+        View.OnFocusChangeListener autoSaveText = new View.OnFocusChangeListener() {
+            @Override
+            public void onFocusChange(View v, boolean hasFocus) {
+                if (!hasFocus) {
+                    saveQuietly();
+                }
+            }
+        };
+        etBaseUrl.setOnFocusChangeListener(autoSaveText);
+        etApiKey.setOnFocusChangeListener(autoSaveText);
+        etModel.setOnFocusChangeListener(autoSaveText);
+        etCustomPrompt.setOnFocusChangeListener(autoSaveText);
+        etHistBaseUrl.setOnFocusChangeListener(autoSaveText);
+        etHistApiKey.setOnFocusChangeListener(autoSaveText);
+        etHistModel.setOnFocusChangeListener(autoSaveText);
+    }
+
+    /** 静默保存：写配置 + 刷新状态，不弹 Toast（供勾选/失焦自动保存用）。 */
+    private void saveQuietly() {
+        saveInternal(true);
+    }
+
+    /** “测试当前 API”：用界面上当前填的值，后台调一次翻译，弹结果。 */
+    private void testApi() {
+        final TranslateConfig cfg = new TranslateConfig();
+        cfg.baseUrl = etBaseUrl.getText().toString().trim();
+        cfg.apiKey = etApiKey.getText().toString().trim();
+        cfg.model = etModel.getText().toString().trim();
+        cfg.customPrompt = etCustomPrompt.getText().toString().trim();
+        if (!cfg.hasApi()) {
+            Toast.makeText(this, "先填 API 地址和模型", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        btnTestApi.setEnabled(false);
+        btnTestApi.setText("测试中…");
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                final String out = LlmClient.translate(
+                        cfg, "你好，请问这个多少钱？", "zh", "vi", null);
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        btnTestApi.setEnabled(true);
+                        btnTestApi.setText("测试当前 API");
+                        if (out != null) {
+                            Toast.makeText(TranslateSettingsActivity.this,
+                                    "测试成功：" + out, Toast.LENGTH_LONG).show();
+                        } else {
+                            Toast.makeText(TranslateSettingsActivity.this,
+                                    "测试失败：请检查 API 地址、密钥、模型与网络",
+                                    Toast.LENGTH_LONG).show();
+                        }
+                    }
+                });
+            }
+        }).start();
+    }
+
     private void save() {
+        saveInternal(false);
+    }
+
+    private void saveInternal(boolean quiet) {
         TranslateConfig cfg = new TranslateConfig();
         cfg.baseUrl = etBaseUrl.getText().toString().trim();
         cfg.apiKey = etApiKey.getText().toString().trim();
@@ -251,6 +358,9 @@ public class TranslateSettingsActivity extends Activity {
         cfg.saveForSettings(this);
         lastCfg = cfg;
         refreshStatus(cfg);
+        if (quiet) {
+            return;
+        }
         if (cfg.baseUrl.length() > 0 && !cfg.baseUrl.startsWith("https://")) {
             Toast.makeText(this, "注意：API 地址不是 https，密钥将明文传输", Toast.LENGTH_LONG).show();
         }
