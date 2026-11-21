@@ -39,8 +39,7 @@ public class ReminderReceiver extends BroadcastReceiver {
             // 设置页生成过 token，就强制核对，对不上直接丢弃。
             String expected = null;
             try {
-                expected = context.getSharedPreferences(TranslateConfig.PREFS_NAME,
-                        Context.MODE_PRIVATE).getString("reminderToken", null);
+                expected = TranslateConfig.openPrefs(context).getString("reminderToken", null);
             } catch (Throwable ignored) {
             }
             if (expected != null && expected.length() > 0) {

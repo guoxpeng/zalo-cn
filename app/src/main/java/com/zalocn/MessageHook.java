@@ -357,7 +357,9 @@ public class MessageHook {
                 String translated = LlmClient.translate(c2, textRef, "auto", "zh", context);
                 if (translated != null && store != null) {
                     store.putCached(textRef, "auto", "zh", translated);
-                    if (threadRef != null) {
+                    if (threadRef != null && store.getContactLang(threadRef) == null) {
+                        // 只在没有记录时自动记为越语；手动设过的（中文/越语）不动，
+                        // 否则对方偶尔发句越语就会把“不翻译”覆盖掉。
                         store.setContactLang(threadRef, "vi");
                     }
                 }

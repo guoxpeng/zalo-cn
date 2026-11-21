@@ -22,9 +22,11 @@ import de.robv.android.xposed.XposedBridge;
  *
  * 两个进程各管一头：
  * - 设置界面（模块自身进程 com.zalocn）：用 SharedPreferences 写配置，
- *   直接走 MODE_PRIVATE。跨进程可读不靠文件权限，靠 LSPosed 的
- *   xposedsharedprefs 重定向（Manifest 已声明），Zalo 进程经
- *   XSharedPreferences 读。
+ *   必须走 MODE_WORLD_READABLE（openPrefs）。LSPosed 新版
+ *   XSharedPreferences（xposedsharedprefs）只有在模块自己用这个模式
+ *   打开时，才把文件重定向到它管理的目录并放行，Zalo 进程才能读到；
+ *   MODE_PRIVATE 写出来的文件对 Zalo 的 UID 不可读，Zalo 侧只会拿到
+ *   默认配置（无 API key、不翻译）。
  * - Hook（Zalo 进程 com.zing.zalo）：走 LSPosed API 93+ 的 XSharedPreferences
  *   读模块配置（Manifest 声明 xposedsharedprefs 后，LSPosed 把模块 prefs
  *   重定向到共享位置，仅 Zalo 进程可读，普通 App 读不到）。
@@ -255,12 +257,22 @@ public class TranslateConfig {
     }
 
     /**
-     * 打开模块自身 prefs：直接 MODE_PRIVATE。Zalo 进程侧不读这个文件，
-     * 经 LSPosed xposedsharedprefs + XSharedPreferences 读配置；老
-     * LSPosed 上 XSharedPreferences 不可用时走 loadForHook 的旧路径回退。
+     * 打开模块自身 prefs：优先 MODE_WORLD_READABLE。LSPosed 新版
+     * XSharedPreferences（xposedsharedprefs）要求模块自己用
+     * MODE_WORLD_READABLE 打开 prefs，LSPosed 才把文件重定向到它管理的
+     * 目录并放行该模式，被 hook 的 App（Zalo）才能读到；MODE_PRIVATE
+     * 写出来的文件对 Zalo 的 UID 不可读，Zalo 侧会拿到默认配置（无 API
+     * key、不翻译；reminderToken 为空，提醒全被丢弃）。Android 13+ 上
+     * 该模式可能抛 SecurityException，回落 MODE_PRIVATE。注意：不要加
+     * 回 setReadable，那是另一回事。
      */
     static SharedPreferences openPrefs(Context ctx) {
-        return ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        try {
+            return ctx.getSharedPreferences(PREFS_NAME, Context.MODE_WORLD_READABLE);
+        } catch (SecurityException e) {
+            XposedBridge.log(TAG + " MODE_WORLD_READABLE not supported, fallback MODE_PRIVATE: " + e);
+            return ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        }
     }
 
     /** 设置界面进程侧保存（不再改文件权限；跨进程可读由 LSPosed 重定向保证）。 */
