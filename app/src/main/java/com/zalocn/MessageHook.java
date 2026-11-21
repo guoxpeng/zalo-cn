@@ -17,9 +17,12 @@ import android.view.ViewGroup;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.lang.ref.WeakReference;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
+import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -113,6 +116,9 @@ public class MessageHook {
     private static final int MAX_IN_FLIGHT = 8;
     /** 正在自动发送中的 ChatView 身份（防 performClick 循环；只在自动重发路径使用）。 */
     private static final Set<Integer> sendingGuards = Collections.synchronizedSet(new HashSet<Integer>());
+    /** 正在执行自动重发的瞬间标志（performClick 同步重入时放行，区别于用户连点）。 */
+    private static final Set<Integer> resending =
+            Collections.synchronizedSet(new HashSet<Integer>());
     /** 检查路径下已填入输入框、待用户确认发送的译文（按 ChatView 身份记）。 */
     private static final Map<Integer, String> reviewedFilled =
             Collections.synchronizedMap(new HashMap<Integer, String>());
@@ -120,6 +126,28 @@ public class MessageHook {
     private static final List<SentEcho> recentSent =
             Collections.synchronizedList(new ArrayList<SentEcho>());
     private static final long SENT_ECHO_TTL_MS = 60000;
+    /** 检查模式下正在翻译中的 ChatView 身份（防连点：翻译中再点发送直接吞掉）。 */
+    private static final Set<Integer> translatingSends =
+            Collections.synchronizedSet(new HashSet<Integer>());
+    /** 行 -> 消息映射（滚动停下后补翻用；弱引用，行回收即丢）。 */
+    private static final Map<View, RowInfo> rowByView =
+            Collections.synchronizedMap(new WeakHashMap<View, RowInfo>());
+    /** 聊天列表是否正在滚动：滚动中只读缓存、不发新翻译请求。 */
+    private static volatile boolean listScrolling = false;
+    /** 滚动代号：每次停下 +1，旧代号的排队任务执行前直接丢弃。 */
+    private static final AtomicLong scrollGeneration = new AtomicLong(0);
+    /** 已挂滚动监听的列表（防重复挂）。 */
+    private static final Map<Object, Boolean> scrollListenersDone =
+            Collections.synchronizedMap(new WeakHashMap<Object, Boolean>());
+    /** 滚动监听接口类（找不到就降级回现有 setMessage 行为）。 */
+    private static volatile Class<?> clsOnScrollListener;
+    private static volatile boolean scrollListenerTried = false;
+    /** 防抖中的停下补翻任务（新滚动事件到来时取消）。 */
+    private static volatile Runnable pendingIdleRun = null;
+    /** 最近一次滚动的列表（弱引用；翻完一条后补翻下一批用）。 */
+    private static volatile WeakReference<Object> lastRvRef = null;
+    /** 进程启动后是否已重设过未过期提醒（重启恢复用，一次即可）。 */
+    private static volatile boolean remindersRescheduled = false;
     /** 已加过自定义项的长按菜单（防重复追加）。 */
     private static final Map<Object, Boolean> menusDone =
             Collections.synchronizedMap(new WeakHashMap<Object, Boolean>());
@@ -202,6 +230,9 @@ public class MessageHook {
         if (vv3 == null) {
             return;
         }
+        // 进程启动后首次绑定：重设重启后被系统清掉的未过期提醒闹钟（见
+        // maybeRescheduleReminders 的注释：恢复点只能放在 Zalo 进程内）。
+        maybeRescheduleReminders(row);
         TranslateConfig cfg = TranslateConfig.loadForHook();
         if (!cfg.enabled || !cfg.autoIncoming) {
             return;
@@ -245,6 +276,10 @@ public class MessageHook {
         }
         // 自己发的消息不做接收翻译（发送侧翻译走发送键拦截）。
         String sender = (String) getField(vv3, "c");
+        // 记下行 -> 消息映射，供滚动停下后的补翻遍历用；同时给聊天列表挂
+        // 滚动监听（找不到列表就降级回现有 setMessage 行为）。
+        rowByView.put((View) row, new RowInfo(key, text, threadId, sender, vv3, msgId));
+        ensureScrollListener((View) row);
         if (selfUid != null && selfUid.length() > 0 && selfUid.equals(sender)) {
             return;
         }
@@ -265,23 +300,59 @@ public class MessageHook {
         if (!cfg.resolveForHistory().hasApi()) {
             return;
         }
+        if (listScrolling) {
+            return; // 滑动中只读缓存，不发新请求；停下后由滚动监听补翻
+        }
+        enqueueTranslation(row, vv3, msgId, key, text, threadId, detectedLang(vv3), -1);
+        maybeCheckReminders(row);
+    }
+
+    // ============================================================
+    // 1b. 滚动跟随翻译：停下再翻，只翻当前可见行
+    // ============================================================
+
+    /** 行 -> 消息映射条目（滚动停下后补翻时用）。 */
+    private static class RowInfo {
+        final String key;
+        final String text;
+        final String threadId;
+        final String sender;
+        final Object vv3;
+        final Object msgId;
+
+        RowInfo(String key, String text, String threadId, String sender, Object vv3, Object msgId) {
+            this.key = key;
+            this.text = text;
+            this.threadId = threadId;
+            this.sender = sender;
+            this.vv3 = vv3;
+            this.msgId = msgId;
+        }
+    }
+
+    /**
+     * 提交一条翻译请求（绑定路径与停下补翻路径共用）。
+     * gen < 0 = 绑定路径，不做代号检查；gen >= 0 = 停下补翻路径，任务开始
+     * 执行前核对代号，过期（用户又滑走了）直接丢弃，不调 API。
+     * 返回 false = 在途已满或已在翻译，本次不发起（停下后自动补翻）。
+     */
+    private static boolean enqueueTranslation(final Object rowRef, final Object vv3Ref,
+            final Object msgIdRef, final String keyRef, final String textRef,
+            final String threadRef, final String detected, final long gen) {
         if (inFlight.size() >= MAX_IN_FLIGHT) {
-            return; // 在途已满：本次不发起请求，等滚动回来重新绑定时再触发
+            return false;
         }
-        if (!inFlight.add(key)) {
-            return;
+        if (!inFlight.add(keyRef)) {
+            return false;
         }
-        final String context = recentContext(threadId, text);
-        final String detected = detectedLang(vv3);
-        final Object rowRef = row;
-        final Object vv3Ref = vv3;
-        final Object msgIdRef = msgId;
-        final String keyRef = key;
-        final String textRef = text;
-        final String threadRef = threadId;
+        final String context = recentContext(threadRef, textRef);
         TRANSLATE_POOL.execute(new Runnable() {
             @Override
             public void run() {
+                if (gen >= 0 && gen != scrollGeneration.get()) {
+                    inFlight.remove(keyRef); // 过期任务直接丢弃，不调 API
+                    return;
+                }
                 TranslateConfig c2 = TranslateConfig.loadForHook().resolveForHistory();
                 String translated = LlmClient.translate(c2, textRef, "auto", "zh", context);
                 if (translated != null && store != null) {
@@ -300,12 +371,278 @@ public class MessageHook {
                             XposedBridge.log(TAG + " applyTranslation error: " + t);
                         } finally {
                             inFlight.remove(keyRef);
+                            // 翻完一条腾出在途名额：若停下时因满员漏翻了可见行，
+                            // 再扫一遍补上。只在成功且缓存可用时触发——失败
+                            // 的行不等（避免失败重试死循环），下次停下再试。
+                            if (result != null && store != null) {
+                                scheduleIdleRescan();
+                            }
                         }
                     }
                 });
             }
         });
-        maybeCheckReminders(row);
+        return true;
+    }
+
+    /** 滚动停下后防抖约 300ms，再扫一遍当前可见行（代号 +1，旧任务作废）。 */
+    private static void scheduleIdlePass(final Object rv) {
+        try {
+            final long gen = scrollGeneration.incrementAndGet();
+            if (pendingIdleRun != null) {
+                mainHandler().removeCallbacks(pendingIdleRun);
+            }
+            Runnable r = new Runnable() {
+                @Override
+                public void run() {
+                    runIdlePass(rv, gen);
+                }
+            };
+            pendingIdleRun = r;
+            mainHandler().postDelayed(r, 300);
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + " scheduleIdlePass fail: " + t);
+        }
+    }
+
+    /** 翻完一条后补扫（只在未滚动、列表已知时）。 */
+    private static void scheduleIdleRescan() {
+        try {
+            if (listScrolling) {
+                return;
+            }
+            Object rv = lastRvRef == null ? null : lastRvRef.get();
+            if (rv == null) {
+                return;
+            }
+            scheduleIdlePass(rv);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /** 停下补翻：遍历当前可见子 View（预加载的屏幕外一两行也算可见），
+     *  没有译文、没有缓存的行发请求；滑动过程中只读缓存。 */
+    private static void runIdlePass(Object rv, long gen) {
+        try {
+            if (rv == null || !(rv instanceof ViewGroup)) {
+                return;
+            }
+            if (gen != scrollGeneration.get()) {
+                return; // 已被更新的停下取代
+            }
+            TranslateConfig cfg = TranslateConfig.loadForHook();
+            if (!cfg.enabled || !cfg.autoIncoming) {
+                return;
+            }
+            if (!cfg.resolveForHistory().hasApi()) {
+                return;
+            }
+            TranslateStore st = storeFor(rv);
+            ViewGroup vg = (ViewGroup) rv;
+            int n = vg.getChildCount();
+            for (int i = 0; i < n; i++) {
+                try {
+                    View child = vg.getChildAt(i);
+                    if (child == null) {
+                        continue;
+                    }
+                    RowInfo info = rowByView.get(child);
+                    if (info == null || info.vv3 == null || info.text == null) {
+                        continue;
+                    }
+                    if (hasTranslation(info.vv3)) {
+                        continue;
+                    }
+                    if (containsHan(info.text)) {
+                        continue;
+                    }
+                    if (st != null && st.isHidden(info.key)) {
+                        continue;
+                    }
+                    if (selfUid != null && selfUid.length() > 0 && selfUid.equals(info.sender)) {
+                        continue;
+                    }
+                    if (isSelfEcho(info.text)) {
+                        continue;
+                    }
+                    if (st != null) {
+                        String cached = st.getCached(info.text, "auto", "zh");
+                        if (cached != null) {
+                            // 缓存命中立刻显示（走与异步回包同一校验+重绑定）。
+                            try {
+                                applyTranslation(child, info.vv3, info.msgId, cached);
+                            } catch (Throwable t) {
+                                XposedBridge.log(TAG + " idle cache apply fail: " + t);
+                            }
+                            continue;
+                        }
+                    }
+                    enqueueTranslation(child, info.vv3, info.msgId, info.key,
+                            info.text, info.threadId, detectedLang(info.vv3), gen);
+                } catch (Throwable t) {
+                    XposedBridge.log(TAG + " idle row fail: " + t);
+                }
+            }
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + " runIdlePass fail: " + t);
+        }
+    }
+
+    /** 滚动状态变化：停下（IDLE=0）时安排补翻；否则只记“在滚动”。 */
+    private static void onListScrollStateChanged(Object rv, int newState) {
+        try {
+            lastRvRef = new WeakReference<Object>(rv);
+            if (newState == 0) { // SCROLL_STATE_IDLE
+                listScrolling = false;
+                scheduleIdlePass(rv);
+            } else {
+                listScrolling = true;
+                if (pendingIdleRun != null) {
+                    mainHandler().removeCallbacks(pendingIdleRun);
+                }
+            }
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + " scroll state fail: " + t);
+        }
+    }
+
+    /** 正在滚动：只记状态，并取消待执行的补翻（停下后重新安排）。 */
+    private static void onListScrolled() {
+        listScrolling = true;
+        try {
+            if (pendingIdleRun != null) {
+                mainHandler().removeCallbacks(pendingIdleRun);
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /** 给行所在的聊天列表挂一次滚动监听（找不到就静默降级）。 */
+    private static void ensureScrollListener(View row) {
+        try {
+            if (clsOnScrollListener == null && !scrollListenerTried) {
+                scrollListenerTried = true;
+                try {
+                    clsOnScrollListener = Class.forName(
+                            "androidx.recyclerview.widget.RecyclerView$OnScrollListener",
+                            false, zaloCl);
+                } catch (Throwable t) {
+                    XposedBridge.log(TAG + " OnScrollListener not found, idle-scroll disabled: " + t);
+                }
+            }
+            if (clsOnScrollListener == null) {
+                return;
+            }
+            Object rv = findRecyclerViewAncestor(row);
+            if (rv == null) {
+                return;
+            }
+            if (scrollListenersDone.containsKey(rv)) {
+                return;
+            }
+            scrollListenersDone.put(rv, Boolean.TRUE);
+            lastRvRef = new WeakReference<Object>(rv);
+            Object listener = Proxy.newProxyInstance(zaloCl,
+                    new Class<?>[]{clsOnScrollListener},
+                    new InvocationHandler() {
+                        @Override
+                        public Object invoke(Object proxy, Method method, Object[] args) {
+                            try {
+                                String name = method.getName();
+                                if ("onScrollStateChanged".equals(name)
+                                        && args != null && args.length == 2) {
+                                    onListScrollStateChanged(args[0],
+                                            ((Integer) args[1]).intValue());
+                                } else if ("onScrolled".equals(name)) {
+                                    onListScrolled();
+                                } else if ("hashCode".equals(name)) {
+                                    return Integer.valueOf(System.identityHashCode(proxy));
+                                } else if ("equals".equals(name)) {
+                                    return Boolean.valueOf(proxy == args[0]);
+                                } else if ("toString".equals(name)) {
+                                    return "ZaloZhScrollListener";
+                                }
+                            } catch (Throwable t) {
+                                XposedBridge.log(TAG + " scroll listener fail: " + t);
+                            }
+                            return null;
+                        }
+                    });
+            callMethod(rv, "addOnScrollListener", listener);
+            XposedBridge.log(TAG + " scroll listener attached to chat list");
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + " ensureScrollListener fail: " + t);
+        }
+    }
+
+    /** 沿父链找 RecyclerView（按类名逐级比对，子类也认；找不到返回 null）。 */
+    private static Object findRecyclerViewAncestor(View v) {
+        try {
+            View p = v;
+            for (int i = 0; i < 12 && p != null; i++) {
+                if (isRecyclerView(p)) {
+                    return p;
+                }
+                Object parent = p.getParent();
+                p = parent instanceof View ? (View) parent : null;
+            }
+        } catch (Throwable ignored) {
+        }
+        return null;
+    }
+
+    private static boolean isRecyclerView(View v) {
+        try {
+            Class<?> c = v.getClass();
+            while (c != null) {
+                if ("androidx.recyclerview.widget.RecyclerView".equals(c.getName())) {
+                    return true;
+                }
+                c = c.getSuperclass();
+            }
+        } catch (Throwable ignored) {
+        }
+        return false;
+    }
+
+    /**
+     * 重启恢复：进程启动后首次绑定时，把未过期的待办提醒重新设闹钟。
+     * 提醒创建时已持久化在 Zalo 自身 prefs（TranslateStore.addReminder），
+     * 这里只重设、过期（dueAt <= now）的不再重设。
+     *
+     * 注意：BOOT_COMPLETED 接收器跑在模块自身进程（com.zalocn），读不到
+     * Zalo 私有 prefs 里的提醒数据（跨 UID + SELinux），加了也是空壳，
+     * 所以恢复点放在 Zalo 进程启动后的首次绑定——重启后首次打开 Zalo
+     * 即恢复；重启后没开过 Zalo，提醒不会响（见测试指南）。
+     */
+    private static void maybeRescheduleReminders(Object row) {
+        try {
+            if (remindersRescheduled) {
+                return;
+            }
+            remindersRescheduled = true;
+            TranslateStore st = storeFor(row);
+            if (st == null) {
+                return;
+            }
+            Context ctx = ((View) row).getContext();
+            if (ctx == null) {
+                return;
+            }
+            long now = System.currentTimeMillis();
+            int n = 0;
+            for (TranslateStore.Reminder r : st.getReminders()) {
+                if (r.dueAt > now) {
+                    scheduleReminderAlarm(ctx, r);
+                    n++;
+                }
+            }
+            if (n > 0) {
+                XposedBridge.log(TAG + " rescheduled " + n + " pending reminders after process start");
+            }
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + " reschedule reminders fail: " + t);
+        }
     }
 
     /** 异步回包应用：先核对行当前消息仍是目标消息（防 RecyclerView 复用串位）。 */
@@ -683,8 +1020,18 @@ public class MessageHook {
             return false;
         }
         int guardKey = System.identityHashCode(chatView);
+        // 自动重发（performClick 同步重入）：直接放行。必须先于防连点检查，
+        // 否则重发会被自己的守卫吞掉。
+        if (resending.contains(Integer.valueOf(guardKey))) {
+            return false;
+        }
+        // 防连点：翻译中用户再点发送，直接吞掉（不重复请求）。
+        if (translatingSends.contains(Integer.valueOf(guardKey))) {
+            Toast.makeText(view.getContext(), "正在翻译，请稍候…", Toast.LENGTH_SHORT).show();
+            return true;
+        }
         if (sendingGuards.contains(guardKey)) {
-            return false; // 翻译后重发的点击，直接放行
+            return false; // 翻译后重发的点击，直接放行（兼容旧路径）
         }
         final TranslateStore st = storeFor(view);
         // 同语不译：该会话对方语言记为中文时，发出中文直接发，不翻译。
@@ -732,10 +1079,12 @@ public class MessageHook {
             return false; // 没配 API，原文照发
         }
         // 检查路径不加 guard（不自动重发）；只在自动重发路径（开关关时）用 guard。
+        // 防连点守卫两种路径都要加：翻译中再点发送直接吞掉，翻译完才放开。
         final boolean autoResend = !cfg.reviewBeforeSend;
         if (autoResend) {
             sendingGuards.add(guardKey);
         }
+        translatingSends.add(Integer.valueOf(guardKey));
         Toast.makeText(view.getContext(), "正在翻译成越语…", Toast.LENGTH_SHORT).show();
         final View sendBtn = view;
         final Object editRef = edit;
@@ -765,7 +1114,12 @@ public class MessageHook {
                                 replaceInputText(editRef, translated);
                                 if (autoResend) {
                                     recordSentText(translated);
-                                    sendBtn.performClick();
+                                    resending.add(Integer.valueOf(guardKeyRef));
+                                    try {
+                                        sendBtn.performClick();
+                                    } finally {
+                                        resending.remove(Integer.valueOf(guardKeyRef));
+                                    }
                                 } else {
                                     // 检查路径：译文填回输入框，等用户自己点发送。
                                     reviewedFilled.put(Integer.valueOf(guardKeyRef), translated);
@@ -778,6 +1132,9 @@ public class MessageHook {
                         } catch (Throwable t) {
                             XposedBridge.log(TAG + " send-after-translate error: " + t);
                             sendingGuards.remove(Integer.valueOf(System.identityHashCode(chatViewRef)));
+                        } finally {
+                            // 防连点守卫任何出口都要放开（含用户已改输入、异常）。
+                            translatingSends.remove(Integer.valueOf(guardKeyRef));
                         }
                     }
                 });
@@ -883,12 +1240,12 @@ public class MessageHook {
 
     /**
      * 给一条提醒排精确闹钟（到点系统发广播给 ReminderReceiver 发通知）。
-     * 提醒内容放 Intent extras 里，不依赖跨进程存储。
-     * 未授精确闹钟权限时 setExact 抛 SecurityException，回落到
-     * setAndAllowWhileIdle（不精确、但 Doze 下仍会触发）并记日志。
+     * 提醒内容放 Intent extras 里，另带校验 token（接收器核对）。
+     * 精确闹钟权限检查的是调用者（Zalo 进程）的权限，不是模块清单里的
+     * 声明：Zalo 没给精确闹钟权限时 canScheduleExactAlarms() 为 false，
+     * 直接走不精确闹钟（仍会响，但可能晚几分钟），不再靠抛异常回落。
      */
-    static void scheduleReminderAlarm(Context ctx, TranslateStore.Reminder r) {
-        try {
+    static void scheduleReminderAlarm(Context ctx, TranslateStore.Reminder r) {        try {
             if (ctx == null || r == null) {
                 return;
             }
@@ -900,15 +1257,36 @@ public class MessageHook {
             intent.setClassName("com.zalocn", "com.zalocn.ReminderReceiver");
             intent.putExtra(ReminderReceiver.EXTRA_TEXT, r.text);
             intent.putExtra(ReminderReceiver.EXTRA_ID, r.id);
+            // 校验 token：设置页生成，经 XSharedPreferences 同步到 Zalo 进程。
+            try {
+                String token = TranslateConfig.loadForHook().reminderToken;
+                if (token != null && token.length() > 0) {
+                    intent.putExtra(ReminderReceiver.EXTRA_TOKEN, token);
+                }
+            } catch (Throwable ignored) {
+            }
             int requestCode = r.id == null ? 0 : r.id.hashCode();
             PendingIntent pi = PendingIntent.getBroadcast(ctx, requestCode, intent,
                     PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-            try {
-                am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, r.dueAt, pi);
-            } catch (SecurityException e) {
-                XposedBridge.log(TAG + " exact alarm not permitted, fallback to inexact: " + e);
-                am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, r.dueAt, pi);
+            boolean canExact = true;
+            if (Build.VERSION.SDK_INT >= 31) {
+                try {
+                    canExact = am.canScheduleExactAlarms();
+                } catch (Throwable ignored) {
+                    canExact = false;
+                }
             }
+            if (canExact) {
+                try {
+                    am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, r.dueAt, pi);
+                    return;
+                } catch (SecurityException e) {
+                    XposedBridge.log(TAG + " exact alarm denied despite canScheduleExactAlarms, fallback to inexact: " + e);
+                }
+            } else {
+                XposedBridge.log(TAG + " Zalo has no exact-alarm permission, fallback to inexact (may be minutes late)");
+            }
+            am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, r.dueAt, pi);
         } catch (Throwable t) {
             XposedBridge.log(TAG + " scheduleReminderAlarm fail: " + t);
         }
