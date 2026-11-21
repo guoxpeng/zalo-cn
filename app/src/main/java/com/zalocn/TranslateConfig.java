@@ -380,9 +380,9 @@ public class TranslateConfig {
         return (v == null || v.length() == 0) ? def : v;
     }
 
-    /** 未配 API 地址或密钥时，翻译功能不可用（界面会提示去设置里填）。 */
+    /** 未配 API 地址时翻译功能不可用（界面会提示去设置里填）。密钥可空：免密钥的公开 API（如 bilibili Index-Translate）不需要密钥。 */
     public boolean hasApi() {
         return baseUrl != null && baseUrl.length() > 0
-                && apiKey != null && apiKey.length() > 0;
+                && model != null && model.length() > 0;
     }
 }

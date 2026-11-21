@@ -54,7 +54,10 @@ public class LlmClient {
             conn.setRequestMethod("POST");
             conn.setDoOutput(true);
             conn.setRequestProperty("Content-Type", "application/json");
-            conn.setRequestProperty("Authorization", "Bearer " + cfg.apiKey);
+            // 密钥可空：免密钥的公开 API 不发 Authorization 头（空 Bearer 会被某些服务端拒绝）。
+            if (cfg.apiKey != null && cfg.apiKey.length() > 0) {
+                conn.setRequestProperty("Authorization", "Bearer " + cfg.apiKey);
+            }
 
             String toName = "zh".equals(toLang) ? "中文" : "越南语";
             StringBuilder sys = new StringBuilder();

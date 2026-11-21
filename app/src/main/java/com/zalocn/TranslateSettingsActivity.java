@@ -77,7 +77,7 @@ public class TranslateSettingsActivity extends Activity {
         addHint(root, "翻译走你自己填的大模型 API（OpenAI 兼容接口）。配置存在模块自身 prefs，LSPosed 重定向后仅 Zalo 进程可读，普通 App 读不到；API 密钥只发往你自己填的 API 地址。全部收到的消息与上下文会发到你填的 API 地址，用中转服务的话中转方能看到所有聊天内容。");
 
         etBaseUrl = addField(root, "API 地址", "例如 https://api.openai.com/v1");
-        etApiKey = addField(root, "API 密钥", "sk-…（仅发往你填的 API 地址）");
+        etApiKey = addField(root, "API 密钥", "sk-…（免密钥的公开 API 可空着）");
         etApiKey.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
         etModel = addField(root, "模型", "例如 gpt-4o-mini");
 
