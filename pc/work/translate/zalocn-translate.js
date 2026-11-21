@@ -1,4 +1,4 @@
-// Zalo PC 翻译注入 v1.0.6 — 听（收消息自动翻）+ 说（译按钮）+ 设置面板
+// Zalo PC 翻译注入 v1.0.7 — 听（收消息自动翻）+ 说（译按钮）+ 设置面板
 // 注入方式：index.html 与 compact-app.html 里加 <script src="zalocn-translate.js">
 // （v1.0.1：主窗口加载 index.html，只注 compact-app 的话主窗口不加载）
 // v1.0.2：按钮持久化（切换会话重装）、观察器重挂、翻译失败重试 3 次后显示提示
@@ -12,9 +12,11 @@
 //   同属 .chat-input-container，左栏 #chat-input-content-id 就是输入区，
 //   在里面找可编辑元素（contenteditable/textarea/role=textbox），
 //   再加全局兜底；setEditorText 同时支持 contenteditable 与 textarea。
-// v1.0.6：加设置面板（和安卓面板一样可调）：输入框边加齿轮按钮，
-//   点开浮层面板——接收语言 / “译”按钮语言 / 自动翻译开关 /
-//   API 地址·密钥·模型 / 翻译提示词 / 测试当前配置；改完自动保存，立即生效。
+// v1.0.6：两件事——① 自己发的越南语也翻译（translateOwn，默认开）；
+//   ② 设置面板（齿轮按钮+浮层：收/说语言、API、提示词、自动翻译、
+//   翻译自己消息、测试；改完自动保存，立即生效）。
+// v1.0.7：补“‘译’按钮同时保留原文”选项（和安卓面板同名选项一致，
+//   默认开：中文一行 + 越南语一行填回；关了只填越南语）。
 (function () {
   'use strict';
   if (window.__zalocn_translate_loaded) return;
@@ -29,6 +31,7 @@
     outgoingTarget: 'vi',        // 说：译按钮把中文翻成越南语
     autoTranslate: true,
     translateOwn: true,          // 自己发的消息也翻（翻成 incomingTarget，方便核对）
+    keepOriginal: true,          // “译”按钮同时保留原文：中文一行 + 越南语一行；关了只填越南语
     customPrompt: ''             // 追加提示词（地名对照等）
   };
   function loadConfig() {
@@ -422,7 +425,9 @@
       translateText(text, CFG.outgoingTarget, function (ok, out) {
         btn.disabled = false; btn.textContent = '译';
         if (!ok || !out) { btn.textContent = '翻译失败'; log('translate button: api failed'); setTimeout(function () { btn.textContent = '译'; }, 2000); return; }
-        if (!setEditorText(getEditor(btn), out)) { btn.textContent = '填回失败'; log('translate button: setEditorText failed'); setTimeout(function () { btn.textContent = '译'; }, 2000); }
+        // keepOriginal 开：原文一行 + 译文一行填回；关：只填译文（和安卓面板同名选项一致）
+        var filled = CFG.keepOriginal ? (text + '\n' + out) : out;
+        if (!setEditorText(getEditor(btn), filled)) { btn.textContent = '填回失败'; log('translate button: setEditorText failed'); setTimeout(function () { btn.textContent = '译'; }, 2000); }
       });
     });
     group.insertBefore(btn, group.firstChild);
@@ -459,6 +464,7 @@
       '<select data-field="outgoingTarget" style="width:100%;padding:6px;border:1px solid #d1d5db;border-radius:6px;margin-bottom:10px;">' + langOptionsHtml(CFG.outgoingTarget) + '</select>' +
       '<label style="display:block;margin-bottom:10px;"><input type="checkbox" data-field="autoTranslate"' + (CFG.autoTranslate ? ' checked' : '') + '> 信息自动翻译（收到消息自动出译文）</label>' +
       '<label style="display:block;margin-bottom:12px;"><input type="checkbox" data-field="translateOwn"' + (CFG.translateOwn ? ' checked' : '') + '> 翻译自己发送的消息（自己发的越南语也翻成中文，方便核对）</label>' +
+      '<label style="display:block;margin-bottom:12px;"><input type="checkbox" data-field="keepOriginal"' + (CFG.keepOriginal ? ' checked' : '') + '> “译”按钮同时保留原文（中文一行 + 越南语一行；不勾只填越南语）</label>' +
       '<label style="display:block;margin-bottom:4px;font-weight:600;">API 地址</label>' +
       '<input type="text" data-field="apiUrl" value="' + (CFG.apiUrl || '').replace(/"/g, '&quot;') + '" style="width:100%;padding:6px;border:1px solid #d1d5db;border-radius:6px;margin-bottom:10px;box-sizing:border-box;">' +
       '<label style="display:block;margin-bottom:4px;font-weight:600;">API 密钥（可空）</label>' +
@@ -568,7 +574,7 @@
       try { startObserver(); } catch (e) { log('tick observer error', e); }
       try { scanAll(); } catch (e) { log('tick scan error', e); }
     }, 2000);
-    log('zalocn translate v1.0.6 ready, incoming->' + CFG.incomingTarget + ', outgoing->' + CFG.outgoingTarget);
+    log('zalocn translate v1.0.7 ready, incoming->' + CFG.incomingTarget + ', outgoing->' + CFG.outgoingTarget);
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
   else boot();
