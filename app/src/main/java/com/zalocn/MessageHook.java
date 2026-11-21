@@ -29,6 +29,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.WeakHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
@@ -96,6 +98,10 @@ public class MessageHook {
 
     /** 正在翻译中的消息键（防重复发请求）。 */
     private static final Set<String> inFlight = Collections.synchronizedSet(new HashSet<String>());
+    /** 全模块共用的固定翻译线程池（接收/发送/短语现翻都走它，不再 new Thread）。 */
+    private static final ExecutorService TRANSLATE_POOL = Executors.newFixedThreadPool(3);
+    /** 同时在途的翻译请求上限：超过时本次不发起，等用户滚动回来重新绑定时再触发。 */
+    private static final int MAX_IN_FLIGHT = 8;
     /** 正在自动发送中的 ChatView 身份（防 performClick 循环；只在自动重发路径使用）。 */
     private static final Set<Integer> sendingGuards = Collections.synchronizedSet(new HashSet<Integer>());
     /** 检查路径下已填入输入框、待用户确认发送的译文（按 ChatView 身份记）。 */
@@ -225,6 +231,9 @@ public class MessageHook {
         if (!cfg.hasApi()) {
             return;
         }
+        if (inFlight.size() >= MAX_IN_FLIGHT) {
+            return; // 在途已满：本次不发起请求，等滚动回来重新绑定时再触发
+        }
         if (!inFlight.add(key)) {
             return;
         }
@@ -236,7 +245,7 @@ public class MessageHook {
         final String keyRef = key;
         final String textRef = text;
         final String threadRef = threadId;
-        new Thread(new Runnable() {
+        TRANSLATE_POOL.execute(new Runnable() {
             @Override
             public void run() {
                 TranslateConfig c2 = TranslateConfig.loadForHook();
@@ -261,7 +270,7 @@ public class MessageHook {
                     }
                 });
             }
-        }).start();
+        });
         maybeCheckReminders(row);
     }
 
@@ -653,7 +662,7 @@ public class MessageHook {
         final Object editRef = edit;
         final Object chatViewRef = chatView;
         final int guardKeyRef = guardKey;
-        new Thread(new Runnable() {
+        TRANSLATE_POOL.execute(new Runnable() {
             @Override
             public void run() {
                 TranslateConfig c2 = TranslateConfig.loadForHook();
@@ -692,7 +701,7 @@ public class MessageHook {
                     }
                 });
             }
-        }).start();
+        });
         return true;
     }
 
@@ -735,7 +744,7 @@ public class MessageHook {
                             // 越语为空：现翻再插。
                             final String zh = ph[0];
                             Toast.makeText(ctx, "正在翻译短语…", Toast.LENGTH_SHORT).show();
-                            new Thread(new Runnable() {
+                            TRANSLATE_POOL.execute(new Runnable() {
                                 @Override
                                 public void run() {
                                     TranslateConfig c2 = TranslateConfig.loadForHook();
@@ -751,7 +760,7 @@ public class MessageHook {
                                         }
                                     });
                                 }
-                            }).start();
+                            });
                         } catch (Throwable t) {
                             XposedBridge.log(TAG + " phrase insert fail: " + t);
                         }
