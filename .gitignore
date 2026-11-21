@@ -13,7 +13,7 @@ data/src_map.json
 build/*.log
 zalozh_hanhua.apk
 
-# 注意：build/zalocn.keystore 特意入库。
-# 这是本项目的固定签名证书（口令已公开在构建脚本中），
-# 目的是让 CI 打出的 APK 与历史版本签名一致、可直接覆盖升级。
-# 仅用于本项目自签名分发，请勿复用到其他项目。
+# 签名证书绝不入库（2026-11-21：旧 keystore 已公开作废并清除）。
+# 新 keystore 只存仓库外（~/.config/zalocn/），CI 从 GitHub Secrets 取。
+*.keystore
+*.jks

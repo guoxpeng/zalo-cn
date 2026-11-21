@@ -14,10 +14,16 @@
 #
 # 环境变量：
 #   ANDROID_SDK_ROOT / ANDROID_HOME   SDK 路径（不设则自动探测常见位置）
-#   ZALOZH_KEYSTORE                   签名证书路径（默认 build/zalocn.keystore）
-#   ZALOZH_KS_PASS / ZALOZH_KEY_PASS  证书口令（默认 zalocn123）
+#   ZALOZH_KEYSTORE                   签名证书路径（默认 ~/.config/zalocn/zalocn-release.keystore）
+#   ZALOZH_KS_PASS / ZALOZH_KEY_PASS  证书口令（必填，无默认值；旧默认口令已作废）
 #   ZALOZH_KEY_ALIAS                  别名（默认 zalocn）
 #   OUT                               产物路径（默认 <repo>/zalocn_hanhua.apk）
+#
+# 签名安全（2026-11-21 轮换后）：旧 keystore（build/zalocn.keystore，旧默认口令）
+# 已公开作废，从仓库与历史中清除。新 keystore 只存放在仓库外
+# （~/.config/zalocn/zalocn-release.keystore），口令不进仓库、不进脚本；
+# CI 从 GitHub Secrets 读（KEYSTORE_BASE64 / KEYSTORE_PASSWORD / KEY_PASSWORD）。
+# 新旧签名不兼容：已装旧签名版的用户必须卸载重装一次。
 # ============================================================================
 set -euo pipefail
 
@@ -162,17 +168,22 @@ PYEOF
 echo "== 7. zipalign + apksigner"
 "$ZIPALIGN" -p -f 4 "$WORK/unsigned.apk" "$WORK/aligned.apk"
 
-KEYSTORE="${ZALOZH_KEYSTORE:-$ROOT/build/zalocn.keystore}"
-KS_PASS="${ZALOZH_KS_PASS:-zalocn123}"
-KEY_PASS="${ZALOZH_KEY_PASS:-zalocn123}"
+KEYSTORE="${ZALOZH_KEYSTORE:-$HOME/.config/zalocn/zalocn-release.keystore}"
+KS_PASS="${ZALOZH_KS_PASS:-}"
+KEY_PASS="${ZALOZH_KEY_PASS:-}"
 KEY_ALIAS="${ZALOZH_KEY_ALIAS:-zalocn}"
 
 if [ ! -f "$KEYSTORE" ]; then
-  echo "   keystore 不存在，自动生成 $KEYSTORE"
-  keytool -genkeypair -v -keystore "$KEYSTORE" -alias "$KEY_ALIAS" \
-    -keyalg RSA -keysize 2048 -validity 3650 \
-    -storepass "$KS_PASS" -keypass "$KEY_PASS" \
-    -dname "CN=zalocn-zh, O=zalocn-zh, C=CN" >/dev/null 2>&1
+  echo "!! 找不到签名证书 $KEYSTORE" >&2
+  echo "   生成方法：keytool -genkeypair -keystore ~/.config/zalocn/zalocn-release.keystore \\" >&2
+  echo "     -alias zalocn -keyalg RSA -keysize 4096 -validity 10000" >&2
+  echo "   口令用 ZALOZH_KS_PASS / ZALOZH_KEY_PASS 环境变量传入，绝不写进仓库。" >&2
+  exit 1
+fi
+if [ -z "$KS_PASS" ] || [ -z "$KEY_PASS" ]; then
+  echo "!! 未设置证书口令：请设 ZALOZH_KS_PASS 与 ZALOZH_KEY_PASS 环境变量" >&2
+  echo "   （无默认值；旧默认口令已作废，不要把口令写进脚本或仓库。）" >&2
+  exit 1
 fi
 
 "$APKSIGNER" sign --ks "$KEYSTORE" --ks-key-alias "$KEY_ALIAS" \
