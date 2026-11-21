@@ -20,17 +20,18 @@ import android.widget.Toast;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
-import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.WeakHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicLong;
 
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
@@ -110,9 +111,14 @@ public class MessageHook {
     /** 已加过自定义项的长按菜单（防重复追加）。 */
     private static final Map<Object, Boolean> menusDone =
             Collections.synchronizedMap(new WeakHashMap<Object, Boolean>());
-    /** 每会话最近原文（线程安全守卫）。 */
-    private static final Map<String, ArrayDeque<String>> recentByThread =
-            Collections.synchronizedMap(new HashMap<String, ArrayDeque<String>>());
+    /** 每会话最近原文：threadId -> (消息键 -> 条目)，按消息键去重。 */
+    private static final Map<String, LinkedHashMap<String, CtxEntry>> recentByThread =
+            Collections.synchronizedMap(new HashMap<String, LinkedHashMap<String, CtxEntry>>());
+    /** 上下文条目全局递增序号（取最近 N 条时按序号取，不只依赖队列顺序）。 */
+    private static final AtomicLong ctxSeq = new AtomicLong(0);
+    /** ChatView -> 当前会话 threadId（发送侧翻译取上下文用；弱引用，视图回收即丢）。 */
+    private static final Map<Object, String> threadByChatView =
+            Collections.synchronizedMap(new WeakHashMap<Object, String>());
     private static volatile long lastReminderCheck = 0;
 
     private static volatile ClassLoader zaloCl;
@@ -209,7 +215,17 @@ public class MessageHook {
             return;
         }
         String threadId = (String) getField(msgId, "c");
-        recordRecent(threadId, text);
+        recordRecent(threadId, key, text);
+        // 记下这行所属 ChatView 对应的会话，供发送侧翻译取上下文
+        if (threadId != null) {
+            try {
+                Object cv = findChatViewAncestor((View) row);
+                if (cv != null) {
+                    threadByChatView.put(cv, threadId);
+                }
+            } catch (Throwable ignored) {
+            }
+        }
         // 用户手动隐藏过译文的消息不再自动翻。
         TranslateStore st = storeFor(row);
         if (st != null && st.isHidden(key)) {
@@ -666,7 +682,8 @@ public class MessageHook {
             @Override
             public void run() {
                 TranslateConfig c2 = TranslateConfig.loadForHook();
-                final String translated = LlmClient.translate(c2, text, "zh", "vi", null);
+                final String sendCtx = recentContext(threadByChatView.get(chatViewRef), text);
+                final String translated = LlmClient.translate(c2, text, "zh", "vi", sendCtx);
                 mainHandler().post(new Runnable() {
                     @Override
                     public void run() {
@@ -748,7 +765,8 @@ public class MessageHook {
                                 @Override
                                 public void run() {
                                     TranslateConfig c2 = TranslateConfig.loadForHook();
-                                    final String tr = LlmClient.translate(c2, zh, "zh", "vi", null);
+                                    String phCtx = recentContext(threadByChatView.get(chatView), zh);
+                                    final String tr = LlmClient.translate(c2, zh, "zh", "vi", phCtx);
                                     mainHandler().post(new Runnable() {
                                         @Override
                                         public void run() {
@@ -939,12 +957,32 @@ public class MessageHook {
         return null;
     }
 
-    private static void recordRecent(String threadId, String text) {
-        if (threadId == null || text == null) {
+    /** 上下文条目：seq 为全局递增序号，text 为原文。 */
+    private static class CtxEntry {
+        final long seq;
+        final String text;
+
+        CtxEntry(long seq, String text) {
+            this.seq = seq;
+            this.text = text;
+        }
+    }
+
+    /**
+     * 记录一条原文进会话上下文。
+     * 按消息键去重：同一条消息重复绑定（RecyclerView 复用/重绑）不再重复记录。
+     *
+     * 排序说明（局限）：逆向文档里没有可用的消息时间戳字段——vv3.k 是否为
+     * 时间戳未锁定（仅一处区间比较证据），MessageId.u()/w() 是 clientMsgId/
+     * globalMsgId 的数字解析、不是时间戳。故用全局递增序号排序；上翻历史
+     * 混进旧消息时，序号仍能保证取到的是最近绑定的 N 条，而不是队列顺序。
+     */
+    private static void recordRecent(String threadId, String msgKey, String text) {
+        if (threadId == null || msgKey == null || text == null) {
             return;
         }
-        ArrayDeque<String> dq = recentByThread.get(threadId);
-        if (dq == null) {
+        LinkedHashMap<String, CtxEntry> m = recentByThread.get(threadId);
+        if (m == null) {
             if (recentByThread.size() >= 8) {
                 String first = null;
                 for (String k : recentByThread.keySet()) {
@@ -955,36 +993,59 @@ public class MessageHook {
                     recentByThread.remove(first);
                 }
             }
-            dq = new ArrayDeque<String>();
-            recentByThread.put(threadId, dq);
+            m = new LinkedHashMap<String, CtxEntry>();
+            recentByThread.put(threadId, m);
         }
-        synchronized (dq) {
-            dq.addLast(text);
-            while (dq.size() > CONTEXT_SIZE) {
-                dq.removeFirst();
+        synchronized (m) {
+            if (m.containsKey(msgKey)) {
+                return; // 同一条消息重复绑定，不重复记录
+            }
+            m.put(msgKey, new CtxEntry(ctxSeq.incrementAndGet(), text));
+            while (m.size() > CONTEXT_SIZE) {
+                String eldest = null;
+                for (String k : m.keySet()) {
+                    eldest = k;
+                    break;
+                }
+                if (eldest == null) {
+                    break;
+                }
+                m.remove(eldest);
             }
         }
     }
 
+    /** 取同一会话最近 CONTEXT_SIZE 条原文（按序号取最近的，排除当前句）。 */
     private static String recentContext(String threadId, String current) {
         if (threadId == null) {
             return null;
         }
-        ArrayDeque<String> dq = recentByThread.get(threadId);
-        if (dq == null || dq.isEmpty()) {
+        LinkedHashMap<String, CtxEntry> m = recentByThread.get(threadId);
+        if (m == null || m.isEmpty()) {
             return null;
         }
-        StringBuilder sb = new StringBuilder();
-        synchronized (dq) {
-            for (String s : dq) {
-                if (current != null && current.equals(s)) {
-                    continue;
-                }
-                if (sb.length() > 0) {
-                    sb.append('\n');
-                }
-                sb.append(s);
+        List<CtxEntry> entries;
+        synchronized (m) {
+            entries = new ArrayList<CtxEntry>(m.values());
+        }
+        // 按序号排序（不只依赖队列顺序），取最近 N 条
+        Collections.sort(entries, new java.util.Comparator<CtxEntry>() {
+            @Override
+            public int compare(CtxEntry a, CtxEntry b) {
+                return a.seq < b.seq ? -1 : (a.seq > b.seq ? 1 : 0);
             }
+        });
+        int from = Math.max(0, entries.size() - CONTEXT_SIZE);
+        StringBuilder sb = new StringBuilder();
+        for (int i = from; i < entries.size(); i++) {
+            String s = entries.get(i).text;
+            if (current != null && current.equals(s)) {
+                continue;
+            }
+            if (sb.length() > 0) {
+                sb.append('\n');
+            }
+            sb.append(s);
         }
         return sb.length() == 0 ? null : sb.toString();
     }
