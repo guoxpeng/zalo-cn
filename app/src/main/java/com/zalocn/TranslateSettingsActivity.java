@@ -125,12 +125,15 @@ public class TranslateSettingsActivity extends Activity {
         etApiKey.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
         etModel = addField(root, "模型", "例如 gpt-4o-mini");
         addHint(root, "自定义大模型 API（OpenAI 兼容接口）。免费引擎不需要填这些，直接就能用。");
+
+        addTitle(root, "翻译提示词");
         etCustomPrompt = new EditText(this);
-        etCustomPrompt.setMinLines(2);
+        etCustomPrompt.setMinLines(6);
         etCustomPrompt.setGravity(Gravity.TOP);
-        etCustomPrompt.setHint("翻译提示词（可选）：例如地名用越南官方译名，不要直译");
+        etCustomPrompt.setHint("可选。地名对照每行一对，如：胡志明市=Thành phố Hồ Chí Minh；也可写要求，如：地名按越南官方译名，不要直译");
         root.addView(etCustomPrompt, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        addHint(root, "只对大模型模板生效；免费引擎（Google/Bing/MyMemory）不用提示词。");
 
         addTitle(root, "译文语言");
         addHint(root, "把收到的消息翻译成");
