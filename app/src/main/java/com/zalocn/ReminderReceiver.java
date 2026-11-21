@@ -24,6 +24,8 @@ public class ReminderReceiver extends BroadcastReceiver {
     static final String ACTION_REMINDER = "com.zalocn.ACTION_REMINDER";
     static final String EXTRA_TEXT = "text";
     static final String EXTRA_ID = "id";
+    /** 校验 token：设置页生成的随机值，Zalo 进程设闹钟时带上，对不上就丢弃。 */
+    static final String EXTRA_TOKEN = "token";
     static final String CHANNEL_ID = "zalocn_reminder";
 
     @Override
@@ -31,6 +33,22 @@ public class ReminderReceiver extends BroadcastReceiver {
         try {
             if (intent == null || !ACTION_REMINDER.equals(intent.getAction())) {
                 return;
+            }
+            // 校验 token：防任意 App 发同 Action 广播冒充提醒弹任意内容。
+            // token 为空 = 用户还没打开过设置页（尚未生成），放行兼容；一旦
+            // 设置页生成过 token，就强制核对，对不上直接丢弃。
+            String expected = null;
+            try {
+                expected = context.getSharedPreferences(TranslateConfig.PREFS_NAME,
+                        Context.MODE_PRIVATE).getString("reminderToken", null);
+            } catch (Throwable ignored) {
+            }
+            if (expected != null && expected.length() > 0) {
+                String got = intent.getStringExtra(EXTRA_TOKEN);
+                if (!expected.equals(got)) {
+                    XposedBridge.log(TAG + " ReminderReceiver dropped: token mismatch");
+                    return;
+                }
             }
             String text = intent.getStringExtra(EXTRA_TEXT);
             if (text == null || text.length() == 0) {

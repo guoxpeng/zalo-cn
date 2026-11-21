@@ -12,6 +12,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 import de.robv.android.xposed.XSharedPreferences;
 import de.robv.android.xposed.XposedBridge;
@@ -72,6 +73,14 @@ public class TranslateConfig {
     /** 快捷短语：每条 "中文" 或 "中文|越语"（越语为空时发送时现翻）。 */
     public List<String[]> phrases = new ArrayList<String[]>();
 
+    /**
+     * 待办提醒校验 token（设置页生成的随机值）。
+     * Zalo 进程设闹钟时把它放进 PendingIntent extras，ReminderReceiver 核对
+     * 不上就丢弃，防止任意 App 发广播冒充提醒。经 XSharedPreferences 同步
+     * 到 Zalo 进程；模块进程侧直接读自身 prefs。
+     */
+    public String reminderToken = "";
+
     // ---- Zalo 进程侧：缓存 ----
     private static volatile TranslateConfig cached;
     private static volatile long cachedMtime = -1;
@@ -112,6 +121,7 @@ public class TranslateConfig {
         c.histApiKey = src.histApiKey;
         c.histModel = src.histModel;
         c.phrases = src.phrases;
+        c.reminderToken = src.reminderToken;
         return c;
     }
 
@@ -196,6 +206,7 @@ public class TranslateConfig {
         cfg.histApiKey = nonEmpty(kv.get("histApiKey"), "");
         cfg.histModel = nonEmpty(kv.get("histModel"), "");
         cfg.phrases = parsePhrases(kv.get("phrases"));
+        cfg.reminderToken = nonEmpty(kv.get("reminderToken"), "");
         return cfg;
     }
 
@@ -215,10 +226,32 @@ public class TranslateConfig {
             cfg.histApiKey = nonEmpty(sp.getString("histApiKey", null), "");
             cfg.histModel = nonEmpty(sp.getString("histModel", null), "");
             cfg.phrases = parsePhrases(sp.getString("phrases", ""));
+            cfg.reminderToken = sp.getString("reminderToken", "");
         } catch (Throwable t) {
             XposedBridge.log(TAG + " load settings config fail: " + t);
         }
         return cfg;
+    }
+
+    /**
+     * 设置进程侧：取提醒校验 token，没有就生成一个随机值存下（只在模块自身
+     * 进程做；Zalo 进程只读，不生成）。用户第一次打开设置页即生成，此后
+     * ReminderReceiver 强制校验；生成前（从未打开过设置页）接收器放行，
+     * 避免提醒在 token 生成前就被拒收。
+     */
+    public static String ensureReminderToken(Context ctx) {
+        try {
+            SharedPreferences sp = openPrefs(ctx);
+            String t = sp.getString("reminderToken", "");
+            if (t == null || t.length() == 0) {
+                t = UUID.randomUUID().toString();
+                sp.edit().putString("reminderToken", t).commit();
+            }
+            return t;
+        } catch (Throwable t2) {
+            XposedBridge.log(TAG + " ensure reminder token fail: " + t2);
+            return "";
+        }
     }
 
     /**
@@ -246,6 +279,7 @@ public class TranslateConfig {
             ed.putString("histApiKey", histApiKey);
             ed.putString("histModel", histModel);
             ed.putString("phrases", joinPhrases(phrases));
+            ed.putString("reminderToken", reminderToken);
             ed.commit();
         } catch (Throwable t) {
             XposedBridge.log(TAG + " save config fail: " + t);

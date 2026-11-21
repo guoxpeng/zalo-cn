@@ -1,7 +1,15 @@
 package com.zalocn;
 
+import android.Manifest;
 import android.app.Activity;
+import android.app.NotificationManager;
+import android.content.Context;
+import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
+import android.provider.Settings;
 import android.text.InputType;
 import android.util.TypedValue;
 import android.view.Gravity;
@@ -39,6 +47,11 @@ public class TranslateSettingsActivity extends Activity {
     private CheckBox cbReviewBeforeSend;
     private EditText etPhrases;
     private TextView tvStatus;
+    private Button btnNotif;
+    private TranslateConfig lastCfg;
+
+    /** 通知权限请求码（安卓 13+ 提醒通知要运行时申请）。 */
+    private static final int REQ_POST_NOTIFICATIONS = 1001;
 
     private static final String DEFAULT_PHRASES =
             "你好|Xin chào\n" +
@@ -88,9 +101,24 @@ public class TranslateSettingsActivity extends Activity {
         root.addView(etPhrases, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
+        addTitle(root, "待办提醒");
+        addHint(root, "精确闹钟取决于 Zalo 有没有精确闹钟权限（系统设置 → 应用 → Zalo → 闹钟与提醒）；没给的话提醒仍会响，但可能晚几分钟。提醒通知由本模块发，需要下面的通知权限。重启手机后，首次打开 Zalo 会自动重设未过期的提醒。");
+
         tvStatus = new TextView(this);
         tvStatus.setPadding(0, dp(12), 0, 0);
         root.addView(tvStatus);
+
+        btnNotif = new Button(this);
+        btnNotif.setText("打开通知设置");
+        btnNotif.setVisibility(View.GONE);
+        btnNotif.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                openNotifSettings();
+            }
+        });
+        root.addView(btnNotif, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         Button btnSave = new Button(this);
         btnSave.setText("保存");
@@ -106,6 +134,55 @@ public class TranslateSettingsActivity extends Activity {
         root.addView(btnSave, lp);
 
         load();
+
+        // 提醒通知由模块自身进程发：安卓 13+ 必须运行时申请通知权限，
+        // 没权限到点什么都不显示。只在未授权时申请一次；用户拒绝后靠
+        // 状态栏的“打开通知设置”按钮手动去开。
+        if (Build.VERSION.SDK_INT >= 33
+                && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                        != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},
+                    REQ_POST_NOTIFICATIONS);
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQ_POST_NOTIFICATIONS && lastCfg != null) {
+            refreshStatus(lastCfg);
+        }
+    }
+
+    /** 打开系统通知设置页（用户拒绝过权限申请后，手动开启的入口）。 */
+    private void openNotifSettings() {
+        try {
+            Intent intent = new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS);
+            intent.putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName());
+            startActivity(intent);
+        } catch (Throwable t) {
+            try {
+                Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+                intent.setData(Uri.parse("package:" + getPackageName()));
+                startActivity(intent);
+            } catch (Throwable t2) {
+                Toast.makeText(this, "请手动打开：系统设置 → 应用 → Zalo 汉化 → 通知",
+                        Toast.LENGTH_LONG).show();
+            }
+        }
+    }
+
+    /** 系统通知总开关（安卓 13+ 含运行时权限状态；24+ 含用户手动关闭状态）。 */
+    private boolean areNotificationsEnabled() {
+        try {
+            if (Build.VERSION.SDK_INT >= 24) {
+                NotificationManager nm = (NotificationManager)
+                        getSystemService(Context.NOTIFICATION_SERVICE);
+                return nm != null && nm.areNotificationsEnabled();
+            }
+        } catch (Throwable ignored) {
+        }
+        return true;
     }
 
     private void load() {
@@ -126,6 +203,9 @@ public class TranslateSettingsActivity extends Activity {
         } else {
             etPhrases.setText(TranslateConfig.joinPhrases(phrases));
         }
+        // 首次打开设置页即生成提醒校验 token（之后 ReminderReceiver 强制校验）。
+        cfg.reminderToken = TranslateConfig.ensureReminderToken(this);
+        lastCfg = cfg;
         refreshStatus(cfg);
     }
 
@@ -145,8 +225,15 @@ public class TranslateSettingsActivity extends Activity {
         cfg.autoOutgoing = cbAutoOutgoing.isChecked();
         cfg.reviewBeforeSend = cbReviewBeforeSend.isChecked();
         cfg.phrases = TranslateConfig.parsePhrases(etPhrases.getText().toString());
+        if (cfg.reminderToken == null || cfg.reminderToken.length() == 0) {
+            cfg.reminderToken = TranslateConfig.ensureReminderToken(this);
+        }
         cfg.saveForSettings(this);
+        lastCfg = cfg;
         refreshStatus(cfg);
+        if (cfg.baseUrl.length() > 0 && !cfg.baseUrl.startsWith("https://")) {
+            Toast.makeText(this, "注意：API 地址不是 https，密钥将明文传输", Toast.LENGTH_LONG).show();
+        }
         Toast.makeText(this, "已保存，Zalo 里的翻译即刻生效（无需重启）", Toast.LENGTH_LONG).show();
     }
 
@@ -159,7 +246,25 @@ public class TranslateSettingsActivity extends Activity {
               .append(cfg.autoIncoming ? "收到的越语自动翻；" : "收到的不自动翻；")
               .append(cfg.autoOutgoing ? "发出的中文自动翻成越语。" : "发出的不自动翻。");
         }
+        // 通知权限：提醒通知由模块自身进程发，安卓 13+ 没权限到点不显示。
+        boolean notifOn = areNotificationsEnabled();
+        sb.append("\n通知权限：").append(notifOn ? "已开" : "未开");
+        if (!notifOn) {
+            sb.append("（提醒到点不会弹窗。手动开启：系统设置 → 应用 → Zalo 汉化 → 通知）");
+        }
+        // API 地址非 https：密钥明文传输，警告但不强制拦截。
+        if (cfg.baseUrl != null && cfg.baseUrl.length() > 0
+                && !cfg.baseUrl.startsWith("https://")) {
+            sb.append("\n⚠ API 地址不是 https，密钥将明文传输，建议改成 https 地址。");
+        }
+        if (cfg.histBaseUrl != null && cfg.histBaseUrl.length() > 0
+                && !cfg.histBaseUrl.startsWith("https://")) {
+            sb.append("\n⚠ 历史翻译 API 地址不是 https，密钥将明文传输。");
+        }
         tvStatus.setText(sb.toString());
+        if (btnNotif != null) {
+            btnNotif.setVisibility(notifOn ? View.GONE : View.VISIBLE);
+        }
     }
 
     private int dp(int v) {
