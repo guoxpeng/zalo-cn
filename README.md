@@ -5,7 +5,7 @@
 
 [![Build APK](https://github.com/guoxpeng/zalo-cn/actions/workflows/build.yml/badge.svg)](https://github.com/guoxpeng/zalo-cn/actions/workflows/build.yml)
 
-> PC 端汉化在同一个仓库的 **`pc-zh` 分支**，切分支查阅。
+> PC 端汉化在同一个仓库的 **`pc/` 目录**，见 `pc/README.md`。
 
 ---
 
