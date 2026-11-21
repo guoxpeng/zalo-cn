@@ -208,14 +208,14 @@ SKIP_BUILD=1 bash build/publish.sh
 
 ## 签名说明
 
-`build/zalocn.keystore` **有意入库**：
+旧证书已于 2026-11-21 作废：`build/zalocn.keystore`（旧默认口令）曾公开入库，
+任何人都能用它签出同名可覆盖安装的包，已从仓库和分支历史里清除，不要再用。
 
-- 这是本项目的固定自签名证书（别名 `zalocn`，口令 `zalocn123`，已写在构建脚本里）
-- 目的是让 CI 打出的 APK 与历史版本签名一致，用户可以直接覆盖升级，
-  不必卸载重装（卸载会丢 LSPosed 作用域配置）
-- 证书指纹：`SHA-256 41:8b:44:25:d2:18:1c:00:a3:bf:f1:3c:dd:8d:97:bd:74:23:19:16:4e:eb:6c:dd:a8:71:ab:bd:09:8e:db:2e`
+- 新证书只存放在仓库外（`~/.config/zalocn/zalocn-release.keystore`），口令不进仓库、不进脚本；
+  CI 从 GitHub Secrets 读（`KEYSTORE_BASE64` / `KEYSTORE_PASSWORD` / `KEY_PASSWORD` / `KEY_ALIAS`）
+- 新证书指纹：`SHA-256 7F:CC:08:55:44:42:F3:BE:99:1E:14:73:6D:DC:FE:76:F4:32:E6:C1:8D:F1:E2:ED:AC:70:AC:21:D8:20:65:16`（RSA 4096）
+- 新旧签名不兼容：装 2.7.0 测试版要先卸载旧版（卸载会丢 LSPosed 作用域配置，装完要重新勾 Zalo）
 - 它**只用于本项目自签名分发**，不要复用到任何其他项目；
-  也请知悉：证书公开意味着任何人都能签出「同名可覆盖」的包，
   只从本仓库 Releases 下载，或自行从源码构建
 
 ---
