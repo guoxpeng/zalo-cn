@@ -6,6 +6,10 @@
 
     <uses-sdk android:minSdkVersion="27" android:targetSdkVersion="34" />
 
+    <!-- 待办提醒到点触发：精确闹钟 + 通知 -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <application
         android:label="Zalo 汉化"
         android:allowBackup="false"
@@ -39,5 +43,13 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- 待办提醒闹钟接收器：只接系统按 PendingIntent 送达的本模块广播。
+             注意：exported=false 意味着只有同 UID 才能触发；闹钟由 Zalo 进程
+             排期、经系统送达，真机必须验证到点是否真响——若被系统拦截，
+             需改 exported=true（另加权限保护）才能用。 -->
+        <receiver
+            android:name="com.zalocn.ReminderReceiver"
+            android:exported="false" />
     </application>
 </manifest>

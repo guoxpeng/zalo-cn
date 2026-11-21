@@ -1,11 +1,14 @@
 package com.zalocn;
 
+import android.app.AlarmManager;
 import android.app.AlertDialog;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.content.Context;
 import android.content.DialogInterface;
+import android.content.Intent;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
@@ -524,7 +527,10 @@ public class MessageHook {
                                     cal.set(java.util.Calendar.SECOND, 0);
                                     due = cal.getTimeInMillis();
                                 }
-                                st.addReminder(text, due, threadId);
+                                TranslateStore.Reminder created = st.addReminder(text, due, threadId);
+                                if (created != null) {
+                                    scheduleReminderAlarm(ctx, created);
+                                }
                                 Toast.makeText(ctx, "已设置提醒：" + labels[which], Toast.LENGTH_SHORT).show();
                             } catch (Throwable t) {
                                 XposedBridge.log(TAG + " addReminder fail: " + t);
@@ -753,10 +759,47 @@ public class MessageHook {
         }
     }
 
+    /**
+     * 给一条提醒排精确闹钟（到点系统发广播给 ReminderReceiver 发通知）。
+     * 提醒内容放 Intent extras 里，不依赖跨进程存储。
+     * 未授精确闹钟权限时 setExact 抛 SecurityException，回落到
+     * setAndAllowWhileIdle（不精确、但 Doze 下仍会触发）并记日志。
+     */
+    static void scheduleReminderAlarm(Context ctx, TranslateStore.Reminder r) {
+        try {
+            if (ctx == null || r == null) {
+                return;
+            }
+            AlarmManager am = (AlarmManager) ctx.getSystemService(Context.ALARM_SERVICE);
+            if (am == null) {
+                return;
+            }
+            Intent intent = new Intent();
+            intent.setClassName("com.zalocn", "com.zalocn.ReminderReceiver");
+            intent.putExtra(ReminderReceiver.EXTRA_TEXT, r.text);
+            intent.putExtra(ReminderReceiver.EXTRA_ID, r.id);
+            int requestCode = r.id == null ? 0 : r.id.hashCode();
+            PendingIntent pi = PendingIntent.getBroadcast(ctx, requestCode, intent,
+                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+            try {
+                am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, r.dueAt, pi);
+            } catch (SecurityException e) {
+                XposedBridge.log(TAG + " exact alarm not permitted, fallback to inexact: " + e);
+                am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, r.dueAt, pi);
+            }
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + " scheduleReminderAlarm fail: " + t);
+        }
+    }
+
     // ============================================================
     // 4. 待办提醒到期检查（在绑定时节流触发）
     // ============================================================
 
+    /**
+     * 兜底：闹钟被拒/未触发时，有新消息绑定仍会顺带弹出已到期提醒。
+     * 正常路径靠 AlarmManager + ReminderReceiver 准时触发，不依赖这里。
+     */
     private static void maybeCheckReminders(Object anyView) {
         try {
             long now = System.currentTimeMillis();

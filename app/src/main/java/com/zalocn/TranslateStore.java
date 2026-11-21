@@ -148,7 +148,8 @@ public class TranslateStore {
         }
     }
 
-    public void addReminder(String text, long dueAt, String thread) {
+    /** 新增一条提醒并返回它（调用方随即用它排精确闹钟；失败返回 null）。 */
+    public Reminder addReminder(String text, long dueAt, String thread) {
         try {
             List<Reminder> list = getReminders();
             Reminder r = new Reminder();
@@ -158,8 +159,10 @@ public class TranslateStore {
             r.thread = thread;
             list.add(r);
             saveReminders(list);
+            return r;
         } catch (Throwable t) {
             XposedBridge.log(TAG + " addReminder fail: " + t);
+            return null;
         }
     }
 
