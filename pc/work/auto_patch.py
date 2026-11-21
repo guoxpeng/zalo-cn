@@ -60,7 +60,7 @@ MARK_VIE = 'text:"Tiếng Việt"'
 # has_translate 是版本感知的：只认当前 TRANSLATE_VERSION 的 JS（JS 里的
 # log 行含 "zalocn translate v<版本>"）。JS 升版后，旧包会被识别为缺注入
 # 而自动重打，否则 JS 更新永远传不到已装的 asar 里。
-TRANSLATE_VERSION = "1.0.4"
+TRANSLATE_VERSION = "1.0.5"
 TRANSLATE_JS = os.path.join(HERE, "translate", "zalocn-translate.js")
 TRANSLATE_MARK = 'data-zalocn="main"'
 TRANSLATE_INDEX_HTML = os.path.join("pc-dist", "index.html")

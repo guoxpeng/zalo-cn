@@ -1,15 +1,17 @@
-// Zalo PC 翻译注入 v1.0.4 — 听（收消息自动翻）+ 说（译按钮）
+// Zalo PC 翻译注入 v1.0.5 — 听（收消息自动翻）+ 说（译按钮）
 // 注入方式：index.html 与 compact-app.html 里加 <script src="zalocn-translate.js">
 // （v1.0.1：主窗口加载 index.html，只注 compact-app 的话主窗口不加载）
 // v1.0.2：按钮持久化（切换会话重装）、观察器重挂、翻译失败重试 3 次后显示提示
 // v1.0.3：fetch 加 15 秒超时（API 挂起会卡死整个翻译队列）、boot 各步独立容错
 // v1.0.4：根因修复——主窗口正常消息走 Frame 布局，容器是
 //   [data-component="message-content-view"][data-qId]（id=message-frame_*），
-//   根本没有 .chat-item 类，旧选择器 .chat-item.to-me 一条都找不到，
-//   所以无自动翻译、无失败提示。改用 [data-qId] 选全部消息容器，
-//   按 me / not-me 类判断收发（Frame 版自己消息带 me 类，对方消息没有）。
-//   输入框改用 .zcinput-root 里的 contenteditable（Zalo 自用选择器）；
-//   按钮点击各失败分支给明确提示（找不到输入框 / 先输入文字 / 翻译失败）。
+//   根本没有 .chat-item 类，旧选择器 .chat-item.to-me 一条都找不到。
+//   改用 [data-qId] 选全部消息容器，按 me / not-me 类判断收发。
+// v1.0.5：v1.0.4 自动翻译已通，但点「译」报“找不到输入框”。
+//   getEditor 改从按钮就近找：按钮在 .normal-buttons-group 里，
+//   同属 .chat-input-container，左栏 #chat-input-content-id 就是输入区，
+//   在里面找可编辑元素（contenteditable/textarea/role=textbox），
+//   再加全局兜底；setEditorText 同时支持 contenteditable 与 textarea。
 (function () {
   'use strict';
   if (window.__zalocn_translate_loaded) return;
@@ -301,25 +303,61 @@
   }
 
   // ---------- 说：译按钮 ----------
-  function getEditor() {
-    // Zalo 输入框是 ProseMirror/TipTap，根容器是 .zcinput-root[data-component="rtf-container"]，
-    // 可编辑区是里面的 [contenteditable]。Zalo 自用选择器就是这个。
+  // 找输入框：优先从按钮就近找——按钮在 .normal-buttons-group 里，
+  // 同属 .chat-input-container，左栏 #chat-input-content-id 就是输入区；
+  // 在里面找可编辑元素（contenteditable / textarea / role=textbox）。
+  // 再加全局兜底（.zcinput-root、ProseMirror、任意 contenteditable）。
+  function getEditor(fromBtn) {
+    var container = null;
+    if (fromBtn && fromBtn.closest) {
+      try { container = fromBtn.closest('.chat-input-container'); } catch (e) {}
+    }
+    if (!container) container = document.querySelector('.chat-input-container');
+    if (container) {
+      var ed = container.querySelector('[contenteditable]:not([contenteditable="false"])')
+        || container.querySelector('textarea')
+        || container.querySelector('[role="textbox"]');
+      if (ed) return ed;
+      // 输入区容器本身也可能就是可编辑元素
+      var content = container.querySelector('#chat-input-content-id')
+        || container.querySelector('.chat-input-content')
+        || container.querySelector('.chat-input-scrollable');
+      if (content) {
+        var inner = content.querySelector('[contenteditable]') || content.querySelector('textarea');
+        if (inner) return inner;
+        if (content.isContentEditable) return content;
+      }
+    }
     var root = document.querySelector('.zcinput-root[data-component="rtf-container"]')
       || document.querySelector('.zcinput-root');
     if (root) {
-      var ed = root.querySelector('[contenteditable]:not([contenteditable="false"])');
-      if (ed) return ed;
+      var ed2 = root.querySelector('[contenteditable]:not([contenteditable="false"])');
+      if (ed2) return ed2;
     }
     return document.querySelector('.ProseMirror[contenteditable="true"]')
       || document.querySelector('.chat-input-container [contenteditable="true"]')
-      || document.querySelector('[contenteditable="true"]');
+      || document.querySelector('[contenteditable="true"]')
+      || document.querySelector('[contenteditable]:not([contenteditable="false"])')
+      || document.querySelector('textarea');
   }
   function getEditorText(ed) {
     if (!ed) return '';
+    // textarea/input 用 value，contenteditable 用 innerText/textContent
+    if (ed.tagName === 'TEXTAREA' || ed.tagName === 'INPUT') return (ed.value || '').trim();
     return getText(ed).replace(/\u200b/g, '').trim();
   }
   function setEditorText(ed, text) {
     if (!ed) return false;
+    // textarea/input：直接设 value 并派发 input 事件
+    if (ed.tagName === 'TEXTAREA' || ed.tagName === 'INPUT') {
+      try {
+        ed.focus();
+        ed.value = text;
+        ed.dispatchEvent(new Event('input', { bubbles: true }));
+        ed.dispatchEvent(new Event('change', { bubbles: true }));
+        return true;
+      } catch (e) { return false; }
+    }
     try { ed.focus(); } catch (e) {}
     var ok = false;
     try {
@@ -362,7 +400,7 @@
     btn.style.cssText = 'margin:0 4px;padding:2px 10px;border:1px solid #0068FF;border-radius:6px;background:#fff;color:#0068FF;font-size:13px;font-weight:600;cursor:pointer;flex:none;';
     btn.addEventListener('click', function (ev) {
       ev.preventDefault(); ev.stopPropagation();
-      var editor = getEditor();
+      var editor = getEditor(btn);
       // 各失败分支给明确提示，不静默：找不到输入框 / 没输文字 / 翻译失败
       if (!editor) { btn.textContent = '找不到输入框'; log('translate button: editor not found'); setTimeout(function () { btn.textContent = '译'; }, 2000); return; }
       var text = getEditorText(editor);
@@ -372,7 +410,7 @@
       translateText(text, CFG.outgoingTarget, function (ok, out) {
         btn.disabled = false; btn.textContent = '译';
         if (!ok || !out) { btn.textContent = '翻译失败'; log('translate button: api failed'); setTimeout(function () { btn.textContent = '译'; }, 2000); return; }
-        if (!setEditorText(getEditor(), out)) { btn.textContent = '填回失败'; log('translate button: setEditorText failed'); setTimeout(function () { btn.textContent = '译'; }, 2000); }
+        if (!setEditorText(getEditor(btn), out)) { btn.textContent = '填回失败'; log('translate button: setEditorText failed'); setTimeout(function () { btn.textContent = '译'; }, 2000); }
       });
     });
     group.insertBefore(btn, group.firstChild);
@@ -393,7 +431,7 @@
       try { startObserver(); } catch (e) { log('tick observer error', e); }
       try { scanAll(); } catch (e) { log('tick scan error', e); }
     }, 2000);
-    log('zalocn translate v1.0.4 ready, incoming->' + CFG.incomingTarget + ', outgoing->' + CFG.outgoingTarget);
+    log('zalocn translate v1.0.5 ready, incoming->' + CFG.incomingTarget + ', outgoing->' + CFG.outgoingTarget);
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
   else boot();
