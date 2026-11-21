@@ -33,6 +33,7 @@ public class TranslateSettingsActivity extends Activity {
     private CheckBox cbEnabled;
     private CheckBox cbAutoIncoming;
     private CheckBox cbAutoOutgoing;
+    private CheckBox cbReviewBeforeSend;
     private EditText etPhrases;
     private TextView tvStatus;
 
@@ -67,6 +68,7 @@ public class TranslateSettingsActivity extends Activity {
         cbEnabled = addCheck(root, "启用消息翻译");
         cbAutoIncoming = addCheck(root, "收到越语消息，自动翻译成中文");
         cbAutoOutgoing = addCheck(root, "发出中文消息，自动翻成越语再发");
+        cbReviewBeforeSend = addCheck(root, "发送前先检查译文（译文填回输入框，确认后点发送）");
 
         addTitle(root, "快捷短语");
         addHint(root, "每行一条，格式：中文 | 越南语。越南语留空时，插入时按配置现翻。点输入框长按可调出短语。");
@@ -104,6 +106,7 @@ public class TranslateSettingsActivity extends Activity {
         cbEnabled.setChecked(cfg.enabled);
         cbAutoIncoming.setChecked(cfg.autoIncoming);
         cbAutoOutgoing.setChecked(cfg.autoOutgoing);
+        cbReviewBeforeSend.setChecked(cfg.reviewBeforeSend);
         List<String[]> phrases = cfg.phrases;
         if (phrases == null || phrases.isEmpty()) {
             etPhrases.setText(DEFAULT_PHRASES);
@@ -124,6 +127,7 @@ public class TranslateSettingsActivity extends Activity {
         cfg.enabled = cbEnabled.isChecked();
         cfg.autoIncoming = cbAutoIncoming.isChecked();
         cfg.autoOutgoing = cbAutoOutgoing.isChecked();
+        cfg.reviewBeforeSend = cbReviewBeforeSend.isChecked();
         cfg.phrases = TranslateConfig.parsePhrases(etPhrases.getText().toString());
         cfg.saveForSettings(this);
         refreshStatus(cfg);

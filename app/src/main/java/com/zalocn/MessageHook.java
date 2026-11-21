@@ -96,8 +96,11 @@ public class MessageHook {
 
     /** 正在翻译中的消息键（防重复发请求）。 */
     private static final Set<String> inFlight = Collections.synchronizedSet(new HashSet<String>());
-    /** 正在自动发送中的 ChatView 身份（防 performClick 循环）。 */
+    /** 正在自动发送中的 ChatView 身份（防 performClick 循环；只在自动重发路径使用）。 */
     private static final Set<Integer> sendingGuards = Collections.synchronizedSet(new HashSet<Integer>());
+    /** 检查路径下已填入输入框、待用户确认发送的译文（按 ChatView 身份记）。 */
+    private static final Map<Integer, String> reviewedFilled =
+            Collections.synchronizedMap(new HashMap<Integer, String>());
     /** 已加过自定义项的长按菜单（防重复追加）。 */
     private static final Map<Object, Boolean> menusDone =
             Collections.synchronizedMap(new WeakHashMap<Object, Boolean>());
@@ -610,7 +613,17 @@ public class MessageHook {
         }
         CharSequence cs = (CharSequence) callMethod(edit, "getText");
         final String text = cs == null ? "" : cs.toString();
-        if (text.trim().length() == 0 || !containsHan(text)) {
+        if (text.trim().length() == 0) {
+            return false;
+        }
+        // 用户已确认过的译文（检查路径填回的）：即使译文里还留着汉字（如人名），
+        // 也是用户看过的内容，直接放行，不再重复翻译。
+        String filled = reviewedFilled.get(Integer.valueOf(guardKey));
+        if (filled != null && filled.equals(text)) {
+            reviewedFilled.remove(Integer.valueOf(guardKey));
+            return false;
+        }
+        if (!containsHan(text)) {
             return false;
         }
         final TranslateStore st = storeFor(view);
@@ -618,17 +631,28 @@ public class MessageHook {
             String cached = st.getCached(text, "zh", "vi");
             if (cached != null) {
                 replaceInputText(edit, cached);
-                return false; // 直接放行，发送越语
+                if (cfg.reviewBeforeSend) {
+                    // 检查路径：译文填回输入框，等用户自己点发送。
+                    reviewedFilled.put(Integer.valueOf(guardKey), cached);
+                    Toast.makeText(view.getContext(), "译文已填入输入框，请检查后点发送", Toast.LENGTH_SHORT).show();
+                    return true;
+                }
+                return false; // 检查关着：直接放行，发送越语
             }
         }
         if (!cfg.hasApi()) {
             return false; // 没配 API，原文照发
         }
-        sendingGuards.add(guardKey);
+        // 检查路径不加 guard（不自动重发）；只在自动重发路径（开关关时）用 guard。
+        final boolean autoResend = !cfg.reviewBeforeSend;
+        if (autoResend) {
+            sendingGuards.add(guardKey);
+        }
         Toast.makeText(view.getContext(), "正在翻译成越语…", Toast.LENGTH_SHORT).show();
         final View sendBtn = view;
         final Object editRef = edit;
         final Object chatViewRef = chatView;
+        final int guardKeyRef = guardKey;
         new Thread(new Runnable() {
             @Override
             public void run() {
@@ -650,10 +674,17 @@ public class MessageHook {
                                     store.putCached(text, "zh", "vi", translated);
                                 }
                                 replaceInputText(editRef, translated);
+                                if (autoResend) {
+                                    sendBtn.performClick();
+                                } else {
+                                    // 检查路径：译文填回输入框，等用户自己点发送。
+                                    reviewedFilled.put(Integer.valueOf(guardKeyRef), translated);
+                                    Toast.makeText(sendBtn.getContext(), "译文已填入输入框，请检查后点发送", Toast.LENGTH_SHORT).show();
+                                }
                             } else {
-                                Toast.makeText(sendBtn.getContext(), "翻译失败，发送原文", Toast.LENGTH_SHORT).show();
+                                // 翻译失败：绝不发中文原文，只 Toast，原文留在输入框等用户处理。
+                                Toast.makeText(sendBtn.getContext(), "翻译失败，已保留原文，请检查后发送", Toast.LENGTH_SHORT).show();
                             }
-                            sendBtn.performClick();
                         } catch (Throwable t) {
                             XposedBridge.log(TAG + " send-after-translate error: " + t);
                             sendingGuards.remove(Integer.valueOf(System.identityHashCode(chatViewRef)));
