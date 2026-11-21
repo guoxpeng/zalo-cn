@@ -158,13 +158,13 @@ SKIP_BUILD=1 bash build/publish.sh
 │       ├── com/zalocn/MainHook.java  # 模块全部逻辑（资源层 + 文本层 + ZInstant）
 │       └── de/robv/android/xposed/   # Xposed API 桩类（仅编译用，不进 dex）
 ├── data/
-│   ├── translations.json             # 资源名 -> 中文（12637 条）
-│   └── src_map_compact.json          # 英文原文 -> 中文（10200 条）
+│   ├── translations.json             # 资源名 -> 中文（12697 条）
+│   └── src_map_compact.json          # 英文原文 -> 中文（10239 条）
 ├── build/
 │   ├── build_module.sh               # 一键构建脚本（跨平台）
 │   ├── publish.sh                    # 一键发布到两个仓库的 Release
-│   ├── classes_dex_empty.dex         # 空壳主 dex
-│   └── zalocn.keystore               # 固定签名证书（见下方说明）
+│   └── classes_dex_empty.dex         # 空壳主 dex
+│       # 签名证书不在仓库里：只存 ~/.config/zalocn/zalocn-release.keystore（见下方说明）
 ├── .github/workflows/build.yml       # CI：自动打包 + Release
 └── RELEASE_NOTES_v*.md               # 各版本更新说明
 ```
