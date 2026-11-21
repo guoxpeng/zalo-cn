@@ -371,7 +371,12 @@ public class MessageHook {
                     return;
                 }
                 TranslateConfig c2 = TranslateConfig.loadForHook().resolveForHistory();
-                String translated = LlmClient.translate(c2, textRef, "auto", targetLang, context);
+                // MyMemory 不支持 auto 检测源语：用 Zalo 自身的检测结果（detected 恒有值，取不到默认 vi）。
+                String from = "auto";
+                if (c2 != null && "mymemory".equals(c2.engine)) {
+                    from = (detected != null && detected.length() > 0) ? detected : "vi";
+                }
+                String translated = LlmClient.translate(c2, textRef, from, targetLang, context);
                 if (translated != null && store != null) {
                     store.putCached(textRef, "auto", targetLang, translated);
                 }

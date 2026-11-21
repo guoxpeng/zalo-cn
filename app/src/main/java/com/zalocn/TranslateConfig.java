@@ -56,6 +56,12 @@ public class TranslateConfig {
     public String baseUrl = DEFAULT_BASE_URL;
     public String apiKey = "";
     public String model = DEFAULT_MODEL;
+    /**
+     * 当前生效的翻译引擎："ai" = 走上面这套大模型 API（OpenAI 兼容）；
+     * "google" / "google2" / "bing" / "mymemory" = 免费网页翻译引擎
+     * （FreeTranslateClient，不用密钥、不读上面三项）。
+     */
+    public String engine = "ai";
     /** 收到外语消息自动翻译（目标语见 incomingTargetLang）。 */
     public boolean autoIncoming = true;
     /** 翻译开关总闸。 */
@@ -133,6 +139,7 @@ public class TranslateConfig {
         c.baseUrl = src.baseUrl;
         c.apiKey = src.apiKey;
         c.model = src.model;
+        c.engine = src.engine;
         c.autoIncoming = src.autoIncoming;
         c.enabled = src.enabled;
         c.customPrompt = src.customPrompt;
@@ -239,6 +246,7 @@ public class TranslateConfig {
         cfg.baseUrl = nonEmpty(kv.get("baseUrl"), DEFAULT_BASE_URL);
         cfg.apiKey = nonEmpty(kv.get("apiKey"), "");
         cfg.model = nonEmpty(kv.get("model"), DEFAULT_MODEL);
+        cfg.engine = nonEmpty(kv.get("engine"), "ai");
         cfg.enabled = !"false".equals(kv.get("enabled"));
         cfg.autoIncoming = !"false".equals(kv.get("autoIncoming"));
         cfg.customPrompt = nonEmpty(kv.get("customPrompt"), "");
@@ -259,6 +267,7 @@ public class TranslateConfig {
             cfg.baseUrl = nonEmpty(sp.getString("baseUrl", null), DEFAULT_BASE_URL);
             cfg.apiKey = nonEmpty(sp.getString("apiKey", null), "");
             cfg.model = nonEmpty(sp.getString("model", null), DEFAULT_MODEL);
+            cfg.engine = nonEmpty(sp.getString("engine", null), "ai");
             cfg.enabled = sp.getBoolean("enabled", true);
             cfg.autoIncoming = sp.getBoolean("autoIncoming", true);
             cfg.customPrompt = nonEmpty(sp.getString("customPrompt", null), "");
@@ -322,6 +331,7 @@ public class TranslateConfig {
             ed.putString("baseUrl", baseUrl);
             ed.putString("apiKey", apiKey);
             ed.putString("model", model);
+            ed.putString("engine", engine);
             ed.putBoolean("enabled", enabled);
             ed.putBoolean("autoIncoming", autoIncoming);
             ed.putString("customPrompt", customPrompt);

@@ -2,8 +2,10 @@ package com.zalocn;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.app.NotificationManager;
 import android.content.Context;
+import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.net.Uri;
@@ -25,6 +27,8 @@ import android.widget.ArrayAdapter;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.util.List;
+
 
 /**
  * 翻译功能设置界面（模块 APK 自带的启动器入口）。
@@ -45,7 +49,9 @@ public class TranslateSettingsActivity extends Activity {
     private CheckBox cbEnabled;
     private CheckBox cbAutoIncoming;
     private Spinner spTargetLang;
-    private Spinner spPreset;
+    private Spinner spProfile;
+    private Button btnNewProfile;
+    private Button btnDeleteProfile;
     private EditText etCustomPrompt;
     private CheckBox cbInputKeepOriginal;
     private TextView tvStatus;
@@ -53,14 +59,11 @@ public class TranslateSettingsActivity extends Activity {
     private Button btnTestApi;
     private TranslateConfig lastCfg;
 
-    /** 大模型预设：{显示名, API 地址, 模型, 是否清空密钥}；最后一项“自定义”不填。 */
-    private static final String[][] PRESETS = {
-            {"bilibili 免密钥翻译", "https://index-translate.bilibili.com/v1",
-                    "Index-Translate-35B-A3B", "clear"},
-            {"OpenAI", "https://api.openai.com/v1", "gpt-4o-mini", "keep"},
-            {"DeepSeek", "https://api.deepseek.com/v1", "deepseek-chat", "keep"},
-            {"自定义", "", "", "keep"},
-    };
+    /** 大模型模板：下拉框显示的模板就是当前生效的大模型，各存各的 API 数据。 */
+    private List<ModelProfile> profiles;
+    private int activeProfileIdx;
+    /** 刷新模板下拉框时屏蔽 onItemSelected，避免 setAdapter/setSelection 误触发切换。 */
+    private boolean updatingProfileSpinner;
 
     /** 通知权限请求码（安卓 13+ 提醒通知要运行时申请）。 */
     private static final int REQ_POST_NOTIFICATIONS = 1001;
@@ -87,23 +90,41 @@ public class TranslateSettingsActivity extends Activity {
         addHint(root, "打开后，别人发来的消息会在原文下方多一行译文。");
 
         addTitle(root, "翻译引擎");
-        addHint(root, "大模型预设（点一下填好地址和模型）");
-        spPreset = new Spinner(this);
-        String[] presetNames = new String[PRESETS.length];
-        for (int i = 0; i < presetNames.length; i++) {
-            presetNames[i] = PRESETS[i][0];
-        }
-        ArrayAdapter<String> presetAdapter = new ArrayAdapter<String>(
-                this, android.R.layout.simple_spinner_item, presetNames);
-        presetAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
-        spPreset.setAdapter(presetAdapter);
-        root.addView(spPreset, new LinearLayout.LayoutParams(
+        addHint(root, "大模型模板：每个模板独立保存地址、密钥、模型和提示词");
+        spProfile = new Spinner(this);
+        root.addView(spProfile, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        LinearLayout rowProfileBtns = new LinearLayout(this);
+        rowProfileBtns.setOrientation(LinearLayout.HORIZONTAL);
+        btnNewProfile = new Button(this);
+        btnNewProfile.setText("新建模板");
+        btnNewProfile.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                showNewProfileDialog();
+            }
+        });
+        btnDeleteProfile = new Button(this);
+        btnDeleteProfile.setText("删除当前模板");
+        btnDeleteProfile.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                deleteCurrentProfile();
+            }
+        });
+        LinearLayout.LayoutParams half = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        half.rightMargin = dp(8);
+        rowProfileBtns.addView(btnNewProfile, half);
+        rowProfileBtns.addView(btnDeleteProfile, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        root.addView(rowProfileBtns, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         etBaseUrl = addField(root, "API 地址", "例如 https://api.openai.com/v1");
         etApiKey = addField(root, "API 密钥", "sk-…（免密钥的公开 API 可空着）");
         etApiKey.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
         etModel = addField(root, "模型", "例如 gpt-4o-mini");
-        addHint(root, "自定义大模型 API（OpenAI 兼容接口）。");
+        addHint(root, "自定义大模型 API（OpenAI 兼容接口）。免费引擎不需要填这些，直接就能用。");
         etCustomPrompt = new EditText(this);
         etCustomPrompt.setMinLines(2);
         etCustomPrompt.setGravity(Gravity.TOP);
@@ -235,29 +256,132 @@ public class TranslateSettingsActivity extends Activity {
         return true;
     }
 
-    /** 当前地址+模型对上哪个预设，对不上就是“自定义”（最后一项）。 */
-    private static int indexOfPreset(String baseUrl, String model) {
-        if (baseUrl != null && model != null) {
-            for (int i = 0; i < PRESETS.length - 1; i++) {
-                if (PRESETS[i][1].equals(baseUrl) && PRESETS[i][2].equals(model)) {
-                    return i;
-                }
-            }
-        }
-        return PRESETS.length - 1;
+    /** 当前模板是否是免费网页翻译引擎（不用填 API 地址/密钥/模型）。 */
+    private boolean activeProfileIsFree() {
+        return profiles != null && activeProfileIdx >= 0 && activeProfileIdx < profiles.size()
+                && profiles.get(activeProfileIdx).engine != null
+                && !"ai".equals(profiles.get(activeProfileIdx).engine);
     }
 
-    /** 选预设：把地址和模型填进输入框（bilibili 免密钥的清空密钥），立即保存。 */
-    private void applyPreset(int pos) {
-        if (pos < 0 || pos >= PRESETS.length - 1) {
-            return; // “自定义”不动
+    /** 免费引擎时禁用 API 输入框（不需要填），大模型模板时启用。 */
+    private void refreshEngineFields() {
+        boolean free = activeProfileIsFree();
+        etBaseUrl.setEnabled(!free);
+        etApiKey.setEnabled(!free);
+        etModel.setEnabled(!free);
+        etCustomPrompt.setEnabled(!free);
+    }
+
+    /** 把一个模板的 API 数据填进输入框。 */
+    private void fillApiFields(ModelProfile p) {
+        etBaseUrl.setText(p.baseUrl);
+        etApiKey.setText(p.apiKey);
+        etModel.setText(p.model);
+        etCustomPrompt.setText(p.prompt);
+    }
+
+    /** 切换模板：先把当前界面上的值存回旧模板，再换新模板并立即生效。 */
+    private void switchProfile(int pos) {
+        if (profiles == null || pos < 0 || pos >= profiles.size() || pos == activeProfileIdx) {
+            return;
         }
-        etBaseUrl.setText(PRESETS[pos][1]);
-        etModel.setText(PRESETS[pos][2]);
-        if ("clear".equals(PRESETS[pos][3])) {
-            etApiKey.setText("");
+        saveQuietly(); // 当前值先存回旧模板
+        activeProfileIdx = pos;
+        ModelProfile.saveActiveName(this, profiles.get(pos).name);
+        fillApiFields(profiles.get(pos));
+        refreshEngineFields();
+        refreshDeleteButton();
+        saveQuietly(); // 新模板的值写进扁平配置，Zalo 侧立即按新引擎翻
+        Toast.makeText(this, "已切换到“" + profiles.get(pos).name + "”",
+                Toast.LENGTH_SHORT).show();
+    }
+
+    /** 重建模板下拉框（新建/删除模板后调）；刷新期间屏蔽 onItemSelected。 */
+    private void refreshProfileSpinner() {
+        updatingProfileSpinner = true;
+        String[] names = new String[profiles.size()];
+        for (int i = 0; i < names.length; i++) {
+            names[i] = profiles.get(i).name;
         }
+        ArrayAdapter<String> adapter = new ArrayAdapter<String>(
+                this, android.R.layout.simple_spinner_item, names);
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        spProfile.setAdapter(adapter);
+        spProfile.setSelection(activeProfileIdx);
+        updatingProfileSpinner = false;
+    }
+
+    /** 只有用户新建的模板能删；系统预设隐藏删除按钮。 */
+    private void refreshDeleteButton() {
+        boolean custom = profiles != null && activeProfileIdx >= 0
+                && activeProfileIdx < profiles.size()
+                && !profiles.get(activeProfileIdx).builtin;
+        btnDeleteProfile.setVisibility(custom ? View.VISIBLE : View.GONE);
+    }
+
+    /** 新建模板：弹框输名字，用当前界面上的 API 数据另存一个模板。 */
+    private void showNewProfileDialog() {
+        final EditText etName = new EditText(this);
+        etName.setHint("例如：我的 DeepSeek");
+        new AlertDialog.Builder(this)
+                .setTitle("新建模板")
+                .setView(etName)
+                .setPositiveButton("保存", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface d, int which) {
+                        createProfile(etName.getText().toString().trim());
+                    }
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    private void createProfile(String name) {
+        if (name.length() == 0) {
+            Toast.makeText(this, "先填个名字", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (ModelProfile.indexOfName(profiles, name) >= 0) {
+            Toast.makeText(this, "这个名字已经有了", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        saveQuietly(); // 当前值先存回旧模板
+        ModelProfile p = new ModelProfile(name,
+                etBaseUrl.getText().toString().trim(),
+                etApiKey.getText().toString().trim(),
+                etModel.getText().toString().trim(),
+                etCustomPrompt.getText().toString().trim(), "ai", false);
+        profiles.add(p);
+        ModelProfile.save(this, profiles);
+        activeProfileIdx = profiles.size() - 1;
+        ModelProfile.saveActiveName(this, name);
+        refreshProfileSpinner();
+        refreshDeleteButton();
+        refreshEngineFields();
         saveQuietly();
+        Toast.makeText(this, "模板“" + name + "”已保存", Toast.LENGTH_SHORT).show();
+    }
+
+    private void deleteCurrentProfile() {
+        if (profiles == null || profiles.isEmpty()) {
+            return;
+        }
+        ModelProfile p = profiles.get(activeProfileIdx);
+        if (p.builtin) {
+            Toast.makeText(this, "系统预设不能删", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        profiles.remove(activeProfileIdx);
+        ModelProfile.save(this, profiles);
+        activeProfileIdx = 0;
+        ModelProfile.saveActiveName(this, profiles.get(0).name);
+        fillApiFields(profiles.get(0));
+        refreshProfileSpinner();
+        refreshDeleteButton();
+        refreshEngineFields();
+        saveQuietly();
+        Toast.makeText(this, "已删除，切回“" + profiles.get(0).name + "”",
+                Toast.LENGTH_SHORT).show();
     }
 
     /** 目标语代码 -> 下拉框位置，找不到默认 0（中文）。 */
@@ -274,22 +398,46 @@ public class TranslateSettingsActivity extends Activity {
 
     private void load() {
         TranslateConfig cfg = TranslateConfig.loadForSettings(this);
-        etBaseUrl.setText(cfg.baseUrl);
-        etApiKey.setText(cfg.apiKey);
-        etModel.setText(cfg.model);
-        spPreset.setSelection(indexOfPreset(cfg.baseUrl, cfg.model));
+        profiles = ModelProfile.load(this);
+        if (profiles.isEmpty()) {
+            // 首次升级：建系统预设，并把当前已保存的扁平配置认领进去。
+            profiles = ModelProfile.defaults();
+            int match = ModelProfile.indexOfValue(profiles, cfg.baseUrl, cfg.model);
+            if (match >= 0 && "ai".equals(profiles.get(match).engine)) {
+                activeProfileIdx = match;
+                ModelProfile p = profiles.get(match);
+                p.apiKey = cfg.apiKey;
+                p.prompt = cfg.customPrompt;
+            } else {
+                profiles.add(new ModelProfile("我的配置", cfg.baseUrl, cfg.apiKey,
+                        cfg.model, cfg.customPrompt, "ai", false));
+                activeProfileIdx = profiles.size() - 1;
+            }
+            ModelProfile.save(this, profiles);
+            ModelProfile.saveActiveName(this, profiles.get(activeProfileIdx).name);
+        } else {
+            activeProfileIdx = ModelProfile.indexOfName(profiles,
+                    ModelProfile.loadActiveName(this));
+            if (activeProfileIdx < 0) {
+                activeProfileIdx = 0;
+            }
+        }
+        fillApiFields(profiles.get(activeProfileIdx));
         etHistBaseUrl.setText(cfg.histBaseUrl);
         etHistApiKey.setText(cfg.histApiKey);
         etHistModel.setText(cfg.histModel);
         cbEnabled.setChecked(cfg.enabled);
         cbAutoIncoming.setChecked(cfg.autoIncoming);
         spTargetLang.setSelection(indexOfTargetLang(cfg.incomingTargetLang));
-        etCustomPrompt.setText(cfg.customPrompt);
         cbInputKeepOriginal.setChecked(cfg.inputKeepOriginal);
         // 首次打开设置页即生成提醒校验 token（之后 ReminderReceiver 强制校验）。
         cfg.reminderToken = TranslateConfig.ensureReminderToken(this);
         lastCfg = cfg;
+        refreshProfileSpinner();
+        refreshDeleteButton();
+        refreshEngineFields();
         refreshStatus(cfg);
+        saveQuietly(); // 把当前模板的值同步写进扁平配置，保证 hook 侧读到的是当前模板
     }
 
     /**
@@ -318,10 +466,12 @@ public class TranslateSettingsActivity extends Activity {
             public void onNothingSelected(android.widget.AdapterView<?> p) {
             }
         });
-        spPreset.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
+        spProfile.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
             @Override
             public void onItemSelected(android.widget.AdapterView<?> p, View v, int pos, long id) {
-                applyPreset(pos);
+                if (!updatingProfileSpinner) {
+                    switchProfile(pos);
+                }
             }
 
             @Override
@@ -357,7 +507,11 @@ public class TranslateSettingsActivity extends Activity {
         cfg.apiKey = etApiKey.getText().toString().trim();
         cfg.model = etModel.getText().toString().trim();
         cfg.customPrompt = etCustomPrompt.getText().toString().trim();
-        if (!cfg.hasApi()) {
+        // 引擎随当前模板走：免费引擎不检查 API 配置，直接测。
+        if (profiles != null && activeProfileIdx >= 0 && activeProfileIdx < profiles.size()) {
+            cfg.engine = profiles.get(activeProfileIdx).engine;
+        }
+        if ("ai".equals(cfg.engine) && !cfg.hasApi()) {
             Toast.makeText(this, "先填 API 地址和模型", Toast.LENGTH_SHORT).show();
             return;
         }
@@ -413,6 +567,16 @@ public class TranslateSettingsActivity extends Activity {
         if (cfg.reminderToken == null || cfg.reminderToken.length() == 0) {
             cfg.reminderToken = TranslateConfig.ensureReminderToken(this);
         }
+        // 引擎随当前模板走；同时把界面上的值存回当前模板（各模板独立保存自己的 API 数据）。
+        if (profiles != null && activeProfileIdx >= 0 && activeProfileIdx < profiles.size()) {
+            ModelProfile p = profiles.get(activeProfileIdx);
+            cfg.engine = p.engine;
+            p.baseUrl = cfg.baseUrl;
+            p.apiKey = cfg.apiKey;
+            p.model = cfg.model;
+            p.prompt = cfg.customPrompt;
+            ModelProfile.save(this, profiles);
+        }
         cfg.saveForSettings(this);
         lastCfg = cfg;
         refreshStatus(cfg);
@@ -427,7 +591,15 @@ public class TranslateSettingsActivity extends Activity {
 
     private void refreshStatus(TranslateConfig cfg) {
         StringBuilder sb = new StringBuilder();
-        if (!cfg.hasApi()) {
+        String engineName = (profiles != null && activeProfileIdx >= 0
+                && activeProfileIdx < profiles.size())
+                ? profiles.get(activeProfileIdx).name : null;
+        if (cfg.engine != null && !"ai".equals(cfg.engine)) {
+            sb.append("状态：当前引擎 ").append(engineName != null ? engineName : cfg.engine)
+              .append("（免费，不用配置），")
+              .append(cfg.autoIncoming ? "收到的自动翻成" + TranslateConfig.targetLangName(cfg.incomingTargetLang) + "；" : "收到的不自动翻；")
+              .append("发出：输入框点“译”翻译后自己点发送。");
+        } else if (!cfg.hasApi()) {
             sb.append("状态：未填 API 地址或密钥，翻译功能暂不可用。");
         } else {
             sb.append("状态：已配置 ").append(cfg.model).append("，")

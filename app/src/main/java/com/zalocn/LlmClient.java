@@ -38,7 +38,14 @@ public class LlmClient {
      */
     public static String translate(TranslateConfig cfg, String text,
                                    String fromLang, String toLang, String context) {
-        if (cfg == null || !cfg.hasApi() || text == null || text.trim().length() == 0) {
+        if (cfg == null || text == null || text.trim().length() == 0) {
+            return null;
+        }
+        // 免费网页翻译引擎：不走大模型 API，不用密钥、不读地址/模型。
+        if (cfg.engine != null && !"ai".equals(cfg.engine)) {
+            return FreeTranslateClient.translate(cfg.engine, text, fromLang, toLang);
+        }
+        if (!cfg.hasApi()) {
             return null;
         }
         HttpURLConnection conn = null;
