@@ -1,4 +1,4 @@
-// Zalo PC 翻译注入 v1.0.5 — 听（收消息自动翻）+ 说（译按钮）
+// Zalo PC 翻译注入 v1.0.6 — 听（收消息自动翻）+ 说（译按钮）+ 设置面板
 // 注入方式：index.html 与 compact-app.html 里加 <script src="zalocn-translate.js">
 // （v1.0.1：主窗口加载 index.html，只注 compact-app 的话主窗口不加载）
 // v1.0.2：按钮持久化（切换会话重装）、观察器重挂、翻译失败重试 3 次后显示提示
@@ -12,6 +12,9 @@
 //   同属 .chat-input-container，左栏 #chat-input-content-id 就是输入区，
 //   在里面找可编辑元素（contenteditable/textarea/role=textbox），
 //   再加全局兜底；setEditorText 同时支持 contenteditable 与 textarea。
+// v1.0.6：加设置面板（和安卓面板一样可调）：输入框边加齿轮按钮，
+//   点开浮层面板——接收语言 / “译”按钮语言 / 自动翻译开关 /
+//   API 地址·密钥·模型 / 翻译提示词 / 测试当前配置；改完自动保存，立即生效。
 (function () {
   'use strict';
   if (window.__zalocn_translate_loaded) return;
@@ -25,6 +28,7 @@
     incomingTarget: 'zh-hans',   // 听：收到的消息翻成中文
     outgoingTarget: 'vi',        // 说：译按钮把中文翻成越南语
     autoTranslate: true,
+    translateOwn: true,          // 自己发的消息也翻（翻成 incomingTarget，方便核对）
     customPrompt: ''             // 追加提示词（地名对照等）
   };
   function loadConfig() {
@@ -51,6 +55,12 @@
   function langName(code) {
     return { 'zh-hans': '中文', 'zh-hant': '繁體中文', 'vi': '越南语', 'en': '英语', 'ko': '韩语', 'th': '泰语', 'lo': '老挝语', 'km': '高棉语', 'my': '缅甸语', 'ms': '马来语', 'id': '印尼语', 'ja': '日语' }[code] || code;
   }
+  // 设置面板下拉框的语言列表（和安卓面板一致）
+  var LANGS = [
+    ['zh-hans', '中文（简体）'], ['zh-hant', '中文（繁體）'], ['vi', '越南语'],
+    ['en', '英语'], ['ko', '韩语'], ['th', '泰语'], ['lo', '老挝语'],
+    ['km', '高棉语'], ['my', '缅甸语'], ['ms', '马来语'], ['id', '印尼语'], ['ja', '日语']
+  ];
 
   // ---------- 翻译 ----------
   var inflight = 0, queue = [];
@@ -238,7 +248,9 @@
   function processItem(item) {
     if (!CFG.autoTranslate) return;
     if (!item.getAttribute) return;
-    if (isOutgoing(item)) return;                       // 自己的消息不翻
+    // 自己发的消息：translateOwn 开时也翻（翻成 incomingTarget，方便核对自己发了什么）；
+    // 关时跳过。已是目标语言的（比如自己发的中文）由 needsTranslate 挡下，不会重复翻。
+    if (isOutgoing(item) && !CFG.translateOwn) return;
     if (item.getAttribute('data-zalocn-done')) return;
     var qid = item.getAttribute('data-qId') || '';
     if (qid && translatedIds[qid]) { markDone(item, qid); return; }
@@ -414,7 +426,132 @@
       });
     });
     group.insertBefore(btn, group.firstChild);
+    installSettingsButton(group);
     log('translate button installed');
+    return true;
+  }
+
+  // ---------- 设置面板（和安卓面板一样可调） ----------
+  // 浮层挂在 document.body 下（React 管不着，不会被重渲染删掉）；
+  // 齿轮按钮和「译」按钮一起装在 .normal-buttons-group 里，同样走持久化重装。
+  var panelEl = null;
+  function langOptionsHtml(selected) {
+    var h = '';
+    for (var i = 0; i < LANGS.length; i++) {
+      h += '<option value="' + LANGS[i][0] + '"' + (LANGS[i][0] === selected ? ' selected' : '') + '>' + LANGS[i][1] + '</option>';
+    }
+    return h;
+  }
+  function buildSettingsPanel() {
+    if (panelEl && document.contains(panelEl)) return panelEl;
+    var p = document.createElement('div');
+    p.className = 'zalocn-settings-panel';
+    p.style.cssText = 'position:fixed;right:16px;bottom:96px;width:340px;max-height:72vh;overflow-y:auto;z-index:999999;background:#fff;border:1px solid #e5e7eb;border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,.18);padding:16px;font-family:inherit;font-size:13px;color:#1f2937;display:none;';
+    p.innerHTML =
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">' +
+        '<div style="font-size:15px;font-weight:700;">翻译设置</div>' +
+        '<button type="button" data-act="close" style="border:none;background:none;font-size:18px;cursor:pointer;color:#6b7280;">×</button>' +
+      '</div>' +
+      '<div style="color:#6b7280;font-size:12px;margin-bottom:12px;">改完自动保存，立即生效。</div>' +
+      '<label style="display:block;margin-bottom:4px;font-weight:600;">收到的消息翻译成</label>' +
+      '<select data-field="incomingTarget" style="width:100%;padding:6px;border:1px solid #d1d5db;border-radius:6px;margin-bottom:10px;">' + langOptionsHtml(CFG.incomingTarget) + '</select>' +
+      '<label style="display:block;margin-bottom:4px;font-weight:600;">“译”按钮翻译成</label>' +
+      '<select data-field="outgoingTarget" style="width:100%;padding:6px;border:1px solid #d1d5db;border-radius:6px;margin-bottom:10px;">' + langOptionsHtml(CFG.outgoingTarget) + '</select>' +
+      '<label style="display:block;margin-bottom:10px;"><input type="checkbox" data-field="autoTranslate"' + (CFG.autoTranslate ? ' checked' : '') + '> 信息自动翻译（收到消息自动出译文）</label>' +
+      '<label style="display:block;margin-bottom:12px;"><input type="checkbox" data-field="translateOwn"' + (CFG.translateOwn ? ' checked' : '') + '> 翻译自己发送的消息（自己发的越南语也翻成中文，方便核对）</label>' +
+      '<label style="display:block;margin-bottom:4px;font-weight:600;">API 地址</label>' +
+      '<input type="text" data-field="apiUrl" value="' + (CFG.apiUrl || '').replace(/"/g, '&quot;') + '" style="width:100%;padding:6px;border:1px solid #d1d5db;border-radius:6px;margin-bottom:10px;box-sizing:border-box;">' +
+      '<label style="display:block;margin-bottom:4px;font-weight:600;">API 密钥（可空）</label>' +
+      '<input type="password" data-field="apiKey" value="' + (CFG.apiKey || '').replace(/"/g, '&quot;') + '" placeholder="bilibili 公开接口不用填" style="width:100%;padding:6px;border:1px solid #d1d5db;border-radius:6px;margin-bottom:10px;box-sizing:border-box;">' +
+      '<label style="display:block;margin-bottom:4px;font-weight:600;">模型</label>' +
+      '<input type="text" data-field="model" value="' + (CFG.model || '').replace(/"/g, '&quot;') + '" style="width:100%;padding:6px;border:1px solid #d1d5db;border-radius:6px;margin-bottom:10px;box-sizing:border-box;">' +
+      '<label style="display:block;margin-bottom:4px;font-weight:600;">翻译提示词（只对大模型生效）</label>' +
+      '<textarea data-field="customPrompt" rows="3" placeholder="地名对照合并写，如 老街-Lào Cai，河内-Hà Nội" style="width:100%;padding:6px;border:1px solid #d1d5db;border-radius:6px;margin-bottom:12px;box-sizing:border-box;resize:vertical;"></textarea>' +
+      '<div style="display:flex;gap:8px;align-items:center;">' +
+        '<button type="button" data-act="test" style="padding:6px 14px;border:1px solid #0068FF;border-radius:6px;background:#0068FF;color:#fff;font-size:13px;cursor:pointer;">测试当前配置</button>' +
+        '<span data-role="saved" style="font-size:12px;color:#16a34a;"></span>' +
+      '</div>' +
+      '<div data-role="test-result" style="margin-top:8px;font-size:12px;color:#374151;white-space:pre-wrap;word-break:break-word;"></div>';
+    p.querySelector('[data-field="customPrompt"]').value = CFG.customPrompt || '';
+    // 改完自动保存（change 事件；文本框失焦时触发；测试/关闭前也会先保存一次）
+    p.addEventListener('change', function () { saveFromPanel(); });
+    p.querySelector('[data-act="close"]').addEventListener('click', function () { saveFromPanel(); closeSettings(); });
+    p.querySelector('[data-act="test"]').addEventListener('click', function () { testFromPanel(); });
+    document.body.appendChild(p);
+    panelEl = p;
+    return p;
+  }
+  function saveFromPanel() {
+    var p = panelEl;
+    if (!p || !document.contains(p)) return;
+    var cfg = {};
+    try { cfg = JSON.parse(localStorage.getItem('zalocn-config') || '{}') || {}; } catch (e) { cfg = {}; }
+    var fields = p.querySelectorAll('[data-field]');
+    for (var i = 0; i < fields.length; i++) {
+      var f = fields[i], k = f.getAttribute('data-field');
+      if (f.type === 'checkbox') cfg[k] = !!f.checked;
+      else cfg[k] = f.value;
+    }
+    try { localStorage.setItem('zalocn-config', JSON.stringify(cfg)); } catch (e) {}
+    CFG = loadConfig();
+    // 「译」按钮标题跟着新目标语言走
+    var btn = document.querySelector('.zalocn-translate-btn');
+    if (btn) btn.title = '翻译成' + langName(CFG.outgoingTarget) + '（填回输入框，不自动发）';
+    var saved = p.querySelector('[data-role="saved"]');
+    if (saved) {
+      saved.textContent = '已保存';
+      setTimeout(function () { if (saved) saved.textContent = ''; }, 1500);
+    }
+    log('settings saved, incoming->' + CFG.incomingTarget + ', outgoing->' + CFG.outgoingTarget);
+  }
+  function testFromPanel() {
+    var p = panelEl;
+    if (!p) return;
+    saveFromPanel();
+    var res = p.querySelector('[data-role="test-result"]');
+    if (res) res.textContent = '正在测试…';
+    // 测中文→“译”按钮目标语言，能通就说明 API 配置可用
+    translateText('你好，今天天气怎么样？', CFG.outgoingTarget, function (ok, out) {
+      if (!res || !document.contains(res)) return;
+      if (ok && out) res.textContent = '当前配置能正常使用。测试译文：' + out;
+      else res.textContent = '测试失败：API 不通或配置有误，请检查 API 地址/密钥/模型与网络。';
+    });
+  }
+  function openSettings() {
+    var p = buildSettingsPanel();
+    // 每次打开都按当前配置刷新表单值
+    var fields = p.querySelectorAll('[data-field]');
+    for (var i = 0; i < fields.length; i++) {
+      var f = fields[i], k = f.getAttribute('data-field');
+      if (f.type === 'checkbox') f.checked = !!CFG[k];
+      else if (f.tagName === 'SELECT' || f.tagName === 'INPUT' || f.tagName === 'TEXTAREA') f.value = CFG[k] || '';
+    }
+    var res = p.querySelector('[data-role="test-result"]');
+    if (res) res.textContent = '';
+    p.style.display = 'block';
+  }
+  function closeSettings() {
+    if (panelEl) panelEl.style.display = 'none';
+  }
+  function toggleSettings() {
+    if (panelEl && panelEl.style.display === 'block') closeSettings();
+    else openSettings();
+  }
+  // 齿轮按钮：和「译」按钮一起装，点开设置面板
+  function installSettingsButton(group) {
+    if (document.querySelector('.zalocn-settings-btn')) return true;
+    if (!group) return false;
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'zalocn-settings-btn';
+    btn.textContent = '⚙';
+    btn.title = '翻译设置';
+    btn.style.cssText = 'margin:0 4px;padding:2px 8px;border:1px solid #d1d5db;border-radius:6px;background:#fff;color:#374151;font-size:13px;cursor:pointer;flex:none;';
+    btn.addEventListener('click', function (ev) {
+      ev.preventDefault(); ev.stopPropagation();
+      toggleSettings();
+    });
+    group.appendChild(btn);
     return true;
   }
 
@@ -431,7 +568,7 @@
       try { startObserver(); } catch (e) { log('tick observer error', e); }
       try { scanAll(); } catch (e) { log('tick scan error', e); }
     }, 2000);
-    log('zalocn translate v1.0.5 ready, incoming->' + CFG.incomingTarget + ', outgoing->' + CFG.outgoingTarget);
+    log('zalocn translate v1.0.6 ready, incoming->' + CFG.incomingTarget + ', outgoing->' + CFG.outgoingTarget);
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
   else boot();
