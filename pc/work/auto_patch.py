@@ -51,7 +51,7 @@ DIST = os.path.join(HERE, "dist_v2")
 LOG = os.path.join(HERE, "auto_patch.log")
 STATE = os.path.join(HERE, "auto_patch_state.json")
 
-INSTALL_ROOT = r"C:/Users/laogu/AppData/Local/Programs/Zalo"
+INSTALL_ROOT = os.environ.get("ZALOPC_INSTALL_ROOT") or r"C:/Users/laogu/AppData/Local/Programs/Zalo"
 MARK_HAN = 'text:"中文"'
 MARK_VIE = 'text:"Tiếng Việt"'
 # 翻译注入：JS 源文件（与本脚本同目录下的 translate/）与 asar 内的检测标记。
