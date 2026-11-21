@@ -1,7 +1,8 @@
-// Zalo PC 翻译注入 v1.0.2 — 听（收消息自动翻）+ 说（译按钮）
+// Zalo PC 翻译注入 v1.0.3 — 听（收消息自动翻）+ 说（译按钮）
 // 注入方式：index.html 与 compact-app.html 里加 <script src="zalocn-translate.js">
 // （v1.0.1：主窗口加载 index.html，只注 compact-app 的话主窗口不加载）
 // v1.0.2：按钮持久化（切换会话重装）、观察器重挂、翻译失败重试 3 次后显示提示
+// v1.0.3：fetch 加 15 秒超时（API 挂起会卡死整个翻译队列）、boot 各步独立容错
 // 不改 Zalo 逻辑、不自动发消息；翻译走 bilibili 公开 API（免密钥），失败回落 Google。
 (function () {
   'use strict';
@@ -65,10 +66,38 @@
     if (CFG.customPrompt) p += '\n另外，请遵守以下翻译要求：' + CFG.customPrompt;
     return p;
   }
+  // fetch 超时：API 挂起（一直不回）会卡死翻译队列，15 秒没回就当失败，
+  // 走兜底或重试，绝不无限等。
+  function fetchWithTimeout(url, opts, ms, cb) {
+    var done = false;
+    var timer = null;
+    var ctrl = null;
+    try {
+      if (window.AbortController) {
+        ctrl = new AbortController();
+        if (opts) opts.signal = ctrl.signal;
+      }
+    } catch (e) {}
+    function finish(ok, val) {
+      if (done) return;
+      done = true;
+      if (timer) clearTimeout(timer);
+      cb(ok, val);
+    }
+    if (ctrl) {
+      timer = setTimeout(function () { try { ctrl.abort(); } catch (e) {} finish(false, ''); }, ms);
+    } else {
+      timer = setTimeout(function () { finish(false, ''); }, ms);
+    }
+    fetch(url, opts)
+      .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function (j) { finish(true, j); })
+      .catch(function () { finish(false, ''); });
+  }
   function callBilibili(text, target, cb) {
     var headers = { 'Content-Type': 'application/json' };
     if (CFG.apiKey) headers['Authorization'] = 'Bearer ' + CFG.apiKey;
-    fetch(CFG.apiUrl, {
+    fetchWithTimeout(CFG.apiUrl, {
       method: 'POST', headers: headers,
       body: JSON.stringify({
         model: CFG.model,
@@ -78,23 +107,21 @@
         ],
         stream: false
       })
-    }).then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-      .then(function (j) {
-        var out = j && j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content;
-        if (out) cb(true, String(out).trim()); else cb(false, '');
-      })
-      .catch(function () { cb(false, ''); });
+    }, 15000, function (ok, j) {
+      if (!ok || !j) { cb(false, ''); return; }
+      var out = j && j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content;
+      if (out) cb(true, String(out).trim()); else cb(false, '');
+    });
   }
   function callGoogle(text, target, cb) {
     var tl = target === 'zh-hans' ? 'zh-CN' : target;
-    fetch('https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=' + encodeURIComponent(tl) + '&dt=t&q=' + encodeURIComponent(text))
-      .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-      .then(function (j) {
-        var out = '';
-        try { out = j[0].map(function (x) { return x[0]; }).join(''); } catch (e) {}
-        if (out) cb(true, out); else cb(false, '');
-      })
-      .catch(function () { cb(false, ''); });
+    fetchWithTimeout('https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=' + encodeURIComponent(tl) + '&dt=t&q=' + encodeURIComponent(text),
+      null, 15000, function (ok, j) {
+      if (!ok || !j) { cb(false, ''); return; }
+      var out = '';
+      try { out = j[0].map(function (x) { return x[0]; }).join(''); } catch (e) {}
+      if (out) cb(true, out); else cb(false, '');
+    });
   }
 
   // ---------- 听：收消息自动翻 ----------
@@ -217,6 +244,7 @@
   }
   function scanAll() {
     var items = document.querySelectorAll('.chat-item.to-me');
+    if (items.length && !scanAll._logged) { scanAll._logged = true; log('scanAll found', items.length, 'incoming messages'); }
     for (var i = 0; i < items.length; i++) processItem(items[i]);
   }
   var observer = null, observedRoot = null;
@@ -307,21 +335,18 @@
 
   // ---------- 启动 ----------
   function boot() {
-    try {
-      scanAll();
-      startObserver();
-      installTranslateButton();
-      // 常驻巡检：切换会话会重建输入区与消息列表，按钮与观察器都要重挂；
-      // 翻译失败的条目也靠本轮重试（最多 3 次）。
-      setInterval(function () {
-        try {
-          installTranslateButton();
-          startObserver();
-          scanAll();
-        } catch (e) { log('tick error', e); }
-      }, 2000);
-      log('zalocn translate v1.0.2 ready, incoming->' + CFG.incomingTarget + ', outgoing->' + CFG.outgoingTarget);
-    } catch (e) { log('boot error', e); }
+    // 每步独立容错：某一步抛错也不影响常驻巡检启动。
+    try { scanAll(); } catch (e) { log('boot scanAll error', e); }
+    try { startObserver(); } catch (e) { log('boot observer error', e); }
+    try { installTranslateButton(); } catch (e) { log('boot button error', e); }
+    // 常驻巡检：切换会话会重建输入区与消息列表，按钮与观察器都要重挂；
+    // 翻译失败的条目也靠本轮重试（最多 3 次）。
+    setInterval(function () {
+      try { installTranslateButton(); } catch (e) { log('tick button error', e); }
+      try { startObserver(); } catch (e) { log('tick observer error', e); }
+      try { scanAll(); } catch (e) { log('tick scan error', e); }
+    }, 2000);
+    log('zalocn translate v1.0.3 ready, incoming->' + CFG.incomingTarget + ', outgoing->' + CFG.outgoingTarget);
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
   else boot();
