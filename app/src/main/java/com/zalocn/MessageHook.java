@@ -24,6 +24,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -92,6 +93,12 @@ public class MessageHook {
     private static volatile int iconClock = 0;
     private static volatile int colorB60 = 0;
     private static volatile int colorR70 = 0;
+    /**
+     * 本机 uid：唯一可靠来源是 CoreUtility.i（ChatView.Na 用它与 vv3.c 比较
+     * 判是不是自己发的；发送者字段另有 MessageId.d）。逆向文档与 jadx_out
+     * 里没有更可靠的自身 uid 来源，也没有 vv3 的方向/是否自己发的标志字段，
+     * 所以获取链只有这一环；拿不到时靠下方的发送回显启发式兜底。
+     */
     private static volatile String selfUid;
 
     private static volatile TranslateStore store;
@@ -108,6 +115,10 @@ public class MessageHook {
     /** 检查路径下已填入输入框、待用户确认发送的译文（按 ChatView 身份记）。 */
     private static final Map<Integer, String> reviewedFilled =
             Collections.synchronizedMap(new HashMap<Integer, String>());
+    /** 最近发出的文本（发送侧记下，接收侧回显判定用；60 秒过期）。 */
+    private static final List<SentEcho> recentSent =
+            Collections.synchronizedList(new ArrayList<SentEcho>());
+    private static final long SENT_ECHO_TTL_MS = 60000;
     /** 已加过自定义项的长按菜单（防重复追加）。 */
     private static final Map<Object, Boolean> menusDone =
             Collections.synchronizedMap(new WeakHashMap<Object, Boolean>());
@@ -163,7 +174,7 @@ public class MessageHook {
                 selfUid = (String) v;
             }
         } catch (Throwable t) {
-            XposedBridge.log(TAG + " selfUid unknown, direction by heuristic: " + t);
+            XposedBridge.log(TAG + " selfUid unknown, own-message echo heuristic active: " + t);
         }
 
         XposedHelpers.findAndHookMethod(clsChatRow, "setMessage", clsVv3,
@@ -234,6 +245,12 @@ public class MessageHook {
         // 自己发的消息不做接收翻译（发送侧翻译走发送键拦截）。
         String sender = (String) getField(vv3, "c");
         if (selfUid != null && selfUid.length() > 0 && selfUid.equals(sender)) {
+            return;
+        }
+        // 启发式兜底：拿不到 selfUid 时，自己刚发出的译文回到列表里会被当成
+        // 收到的消息；发送侧记下的文本在 60 秒内原样出现，即判定为自己消息
+        // 的回显，跳过翻译。
+        if (isSelfEcho(text)) {
             return;
         }
         // 缓存命中：before-hook 阶段注入，绑定布局直接按译文算。
@@ -646,9 +663,11 @@ public class MessageHook {
         String filled = reviewedFilled.get(Integer.valueOf(guardKey));
         if (filled != null && filled.equals(text)) {
             reviewedFilled.remove(Integer.valueOf(guardKey));
+            recordSentText(text);
             return false;
         }
         if (!containsHan(text)) {
+            recordSentText(text);
             return false;
         }
         final TranslateStore st = storeFor(view);
@@ -662,10 +681,12 @@ public class MessageHook {
                     Toast.makeText(view.getContext(), "译文已填入输入框，请检查后点发送", Toast.LENGTH_SHORT).show();
                     return true;
                 }
+                recordSentText(cached);
                 return false; // 检查关着：直接放行，发送越语
             }
         }
         if (!cfg.hasApi()) {
+            recordSentText(text);
             return false; // 没配 API，原文照发
         }
         // 检查路径不加 guard（不自动重发）；只在自动重发路径（开关关时）用 guard。
@@ -701,6 +722,7 @@ public class MessageHook {
                                 }
                                 replaceInputText(editRef, translated);
                                 if (autoResend) {
+                                    recordSentText(translated);
                                     sendBtn.performClick();
                                 } else {
                                     // 检查路径：译文填回输入框，等用户自己点发送。
@@ -1048,6 +1070,57 @@ public class MessageHook {
             sb.append(s);
         }
         return sb.length() == 0 ? null : sb.toString();
+    }
+
+    /** 最近发出的一条文本（带发出时间，供回显判定）。 */
+    private static class SentEcho {
+        final String text;
+        final long at;
+
+        SentEcho(String text, long at) {
+            this.text = text;
+            this.at = at;
+        }
+    }
+
+    /** 发送侧记下刚发出的文本（译文或原文都记；回显判定时只看 60 秒内）。 */
+    private static void recordSentText(String text) {
+        if (text == null || text.length() == 0) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        synchronized (recentSent) {
+            Iterator<SentEcho> it = recentSent.iterator();
+            while (it.hasNext()) {
+                if (now - it.next().at > SENT_ECHO_TTL_MS) {
+                    it.remove();
+                }
+            }
+            while (recentSent.size() >= 10) {
+                recentSent.remove(0);
+            }
+            recentSent.add(new SentEcho(text, now));
+        }
+    }
+
+    /** 文本是否与 60 秒内发出的某条一致（是 = 自己消息的回显）。 */
+    private static boolean isSelfEcho(String text) {
+        if (text == null || text.length() == 0) {
+            return false;
+        }
+        long now = System.currentTimeMillis();
+        synchronized (recentSent) {
+            Iterator<SentEcho> it = recentSent.iterator();
+            while (it.hasNext()) {
+                SentEcho e = it.next();
+                if (now - e.at > SENT_ECHO_TTL_MS) {
+                    it.remove();
+                } else if (e.text.equals(text)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /** 是否含汉字（CJK 统一表意文字区）。 */
