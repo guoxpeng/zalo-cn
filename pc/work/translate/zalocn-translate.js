@@ -1,9 +1,15 @@
-// Zalo PC 翻译注入 v1.0.3 — 听（收消息自动翻）+ 说（译按钮）
+// Zalo PC 翻译注入 v1.0.4 — 听（收消息自动翻）+ 说（译按钮）
 // 注入方式：index.html 与 compact-app.html 里加 <script src="zalocn-translate.js">
 // （v1.0.1：主窗口加载 index.html，只注 compact-app 的话主窗口不加载）
 // v1.0.2：按钮持久化（切换会话重装）、观察器重挂、翻译失败重试 3 次后显示提示
 // v1.0.3：fetch 加 15 秒超时（API 挂起会卡死整个翻译队列）、boot 各步独立容错
-// 不改 Zalo 逻辑、不自动发消息；翻译走 bilibili 公开 API（免密钥），失败回落 Google。
+// v1.0.4：根因修复——主窗口正常消息走 Frame 布局，容器是
+//   [data-component="message-content-view"][data-qId]（id=message-frame_*），
+//   根本没有 .chat-item 类，旧选择器 .chat-item.to-me 一条都找不到，
+//   所以无自动翻译、无失败提示。改用 [data-qId] 选全部消息容器，
+//   按 me / not-me 类判断收发（Frame 版自己消息带 me 类，对方消息没有）。
+//   输入框改用 .zcinput-root 里的 contenteditable（Zalo 自用选择器）；
+//   按钮点击各失败分支给明确提示（找不到输入框 / 先输入文字 / 翻译失败）。
 (function () {
   'use strict';
   if (window.__zalocn_translate_loaded) return;
@@ -36,6 +42,8 @@
 
   // ---------- 工具 ----------
   function log() { try { console.log.apply(console, ['[ZALOCN]'].concat([].slice.call(arguments))); } catch (e) {} }
+  // 取元素文本：innerText 为空时（隐藏元素/某些环境）回落到 textContent。
+  function getText(el) { try { return (el.innerText || el.textContent || ''); } catch (e) { return ''; } }
   function isChinese(s) { var m = s.match(/[\u4e00-\u9fff]/g); return m && m.length >= s.replace(/\s/g, '').length * 0.5; }
   function hasCJK(s) { return /[\u4e00-\u9fff]/.test(s); }
   function langName(code) {
@@ -141,24 +149,43 @@
     // 跳过带图片/文件/视频/语音/贴纸等非文字内容的消息
     if (item.querySelector('img.chat-message-picture__photo, video, audio, .chat-message-picture, .file-item, .sticker, [class*="sticker"]')) {
       // 有图也可能带文字说明；先只跳过纯媒体消息：若文字极短则跳过
-      var t0 = (item.innerText || '').trim();
+      var t0 = getText(item).trim();
       if (t0.length < 2) return '';
     }
     // 优先找消息正文容器
     var cand = item.querySelector('.msg-content')
       || item.querySelector('.card-content')
       || item.querySelector('.message-text')
-      || item.querySelector('[class*="message-text"]');
+      || item.querySelector('[class*="message-text"]')
+      || item.querySelector('[data-component="message-text-content"]');
     var text = '';
-    if (cand) text = (cand.innerText || '').trim();
+    if (cand) text = getText(cand).trim();
     if (!text) {
-      // 兜底：取整条 innerText，去掉发送者名/时间等首尾行
-      var lines = (item.innerText || '').split('\n').map(function (s) { return s.trim(); }).filter(Boolean);
-      // 去掉纯时间行（如 21:30）和单字行
-      lines = lines.filter(function (s) { return !/^\d{1,2}:\d{2}$/.test(s) && !/^(上午|下午|昨天|今天)/.test(s); });
+      // 兜底：取整条 innerText，去掉时间/已读/反应计数等噪音行
+      var lines = getText(item).split('\n').map(function (s) { return s.trim(); }).filter(Boolean);
+      lines = lines.filter(function (s) {
+        if (/^\d{1,2}:\d{2}$/.test(s)) return false;                 // 纯时间 23:18
+        if (/^(上午|下午|昨天|今天)/.test(s)) return false;           // 日期词
+        if (/^(已读|Seen|Đã xem|Đã nhận)$/i.test(s)) return false;   // 已读回执
+        if (/^\d+$/.test(s)) return false;                           // 反应计数
+        if (/^[👍❤️😂😮😢🙏👏🥰😍🤣😆😊]+$/.test(s)) return false;    // 纯表情
+        return true;
+      });
       text = lines.join('\n').trim();
     }
     return text;
+  }
+  // 判断一条消息是不是自己发的。Frame 布局：自己消息的容器带 me 类，
+  // 对方消息没有；chat-item 布局：自己是 not-me，对方是 to-me。
+  // Custom 布局的方向类可能在父级，往上查两层。
+  function isOutgoing(item) {
+    var el = item;
+    for (var i = 0; i < 3 && el; i++, el = el.parentElement) {
+      if (!el.classList) continue;
+      if (el.classList.contains('me') || el.classList.contains('not-me')) return true;
+      if (el.classList.contains('to-me')) return false;
+    }
+    return false;
   }
   function needsTranslate(text, target) {
     if (!text || text.length < 1) return false;
@@ -208,9 +235,8 @@
   }
   function processItem(item) {
     if (!CFG.autoTranslate) return;
-    if (!item.classList || !item.classList.contains('chat-item')) return;
-    if (item.classList.contains('me')) return;              // 自己的消息不翻
-    if (!item.classList.contains('to-me')) return;           // 只翻收到的（to-me）
+    if (!item.getAttribute) return;
+    if (isOutgoing(item)) return;                       // 自己的消息不翻
     if (item.getAttribute('data-zalocn-done')) return;
     var qid = item.getAttribute('data-qId') || '';
     if (qid && translatedIds[qid]) { markDone(item, qid); return; }
@@ -243,8 +269,11 @@
     });
   }
   function scanAll() {
-    var items = document.querySelectorAll('.chat-item.to-me');
-    if (items.length && !scanAll._logged) { scanAll._logged = true; log('scanAll found', items.length, 'incoming messages'); }
+    // 主窗口正常消息走 Frame 布局，容器是 [data-qId]（id=message-frame_*），
+    // 没有 .chat-item 类；chat-item 只用于非 Frame/非 Custom 布局。
+    // 所以用 [data-qId] 选全部消息容器，收发由 isOutgoing 判断。
+    var items = document.querySelectorAll('[data-qId]');
+    if (items.length && !scanAll._logged) { scanAll._logged = true; log('scanAll found', items.length, 'messages (data-qId)'); }
     for (var i = 0; i < items.length; i++) processItem(items[i]);
   }
   var observer = null, observedRoot = null;
@@ -259,9 +288,9 @@
         for (var j = 0; j < m.addedNodes.length; j++) {
           var n = m.addedNodes[j];
           if (n.nodeType !== 1) continue;
-          if (n.classList && n.classList.contains('chat-item')) processItem(n);
+          if (n.getAttribute && n.getAttribute('data-qId')) processItem(n);
           else if (n.querySelectorAll) {
-            var subs = n.querySelectorAll('.chat-item.to-me');
+            var subs = n.querySelectorAll('[data-qId]');
             for (var k = 0; k < subs.length; k++) processItem(subs[k]);
           }
         }
@@ -273,30 +302,47 @@
 
   // ---------- 说：译按钮 ----------
   function getEditor() {
+    // Zalo 输入框是 ProseMirror/TipTap，根容器是 .zcinput-root[data-component="rtf-container"]，
+    // 可编辑区是里面的 [contenteditable]。Zalo 自用选择器就是这个。
+    var root = document.querySelector('.zcinput-root[data-component="rtf-container"]')
+      || document.querySelector('.zcinput-root');
+    if (root) {
+      var ed = root.querySelector('[contenteditable]:not([contenteditable="false"])');
+      if (ed) return ed;
+    }
     return document.querySelector('.ProseMirror[contenteditable="true"]')
       || document.querySelector('.chat-input-container [contenteditable="true"]')
       || document.querySelector('[contenteditable="true"]');
   }
   function getEditorText(ed) {
-    return (ed.innerText || ed.textContent || '').replace(/\u200b/g, '').trim();
+    if (!ed) return '';
+    return getText(ed).replace(/\u200b/g, '').trim();
   }
   function setEditorText(ed, text) {
-    ed.focus();
-    var sel = window.getSelection();
-    sel.selectAllChildren(ed);
+    if (!ed) return false;
+    try { ed.focus(); } catch (e) {}
     var ok = false;
-    try { ok = document.execCommand('insertText', false, text); } catch (e) {}
+    try {
+      var sel = window.getSelection();
+      sel.selectAllChildren(ed);
+      ok = document.execCommand('insertText', false, text);
+    } catch (e) {}
     if (!ok) {
-      // 兜底：直接设文本并派发 input 事件
+      // 兜底：先清后填，再派发 input 事件让 ProseMirror 同步状态
       try {
-        sel.deleteFromDocument();
-        document.execCommand('insertText', false, text);
-      } catch (e2) {
+        document.execCommand('selectAll', false, null);
+        ok = document.execCommand('insertText', false, text);
+      } catch (e2) {}
+    }
+    if (!ok) {
+      try {
         ed.textContent = text;
         ed.dispatchEvent(new Event('input', { bubbles: true }));
-      }
+        ok = true;
+      } catch (e3) {}
     }
-    ed.focus();
+    try { ed.focus(); } catch (e) {}
+    return ok;
   }
   // 持久化安装：切换会话时输入区会重建，按钮会被一起销毁；
   // 每轮检查按钮是否还在 DOM 里，不在就重装（不靠一次性 flag）。
@@ -317,15 +363,16 @@
     btn.addEventListener('click', function (ev) {
       ev.preventDefault(); ev.stopPropagation();
       var editor = getEditor();
-      if (!editor) return;
+      // 各失败分支给明确提示，不静默：找不到输入框 / 没输文字 / 翻译失败
+      if (!editor) { btn.textContent = '找不到输入框'; log('translate button: editor not found'); setTimeout(function () { btn.textContent = '译'; }, 2000); return; }
       var text = getEditorText(editor);
       if (!text) { btn.textContent = '先输入文字'; setTimeout(function () { btn.textContent = '译'; }, 1500); return; }
       if (CFG.outgoingTarget === 'zh-hans' && isChinese(text)) { btn.textContent = '已是中文'; setTimeout(function () { btn.textContent = '译'; }, 1500); return; }
       btn.textContent = '翻译中…'; btn.disabled = true;
       translateText(text, CFG.outgoingTarget, function (ok, out) {
         btn.disabled = false; btn.textContent = '译';
-        if (!ok || !out) { btn.textContent = '翻译失败'; setTimeout(function () { btn.textContent = '译'; }, 1500); return; }
-        setEditorText(getEditor(), out);
+        if (!ok || !out) { btn.textContent = '翻译失败'; log('translate button: api failed'); setTimeout(function () { btn.textContent = '译'; }, 2000); return; }
+        if (!setEditorText(getEditor(), out)) { btn.textContent = '填回失败'; log('translate button: setEditorText failed'); setTimeout(function () { btn.textContent = '译'; }, 2000); }
       });
     });
     group.insertBefore(btn, group.firstChild);
@@ -346,7 +393,7 @@
       try { startObserver(); } catch (e) { log('tick observer error', e); }
       try { scanAll(); } catch (e) { log('tick scan error', e); }
     }, 2000);
-    log('zalocn translate v1.0.3 ready, incoming->' + CFG.incomingTarget + ', outgoing->' + CFG.outgoingTarget);
+    log('zalocn translate v1.0.4 ready, incoming->' + CFG.incomingTarget + ', outgoing->' + CFG.outgoingTarget);
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
   else boot();
