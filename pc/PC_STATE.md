@@ -1,6 +1,6 @@
 # PC 支线交接文档（Zalo PC 汉化）
 
-> 最后更新：2026-11-17（适配 Zalo 26.11.12；脚本全面去硬编码 + 新增 `auto_patch.py` 自动重打 + `watch_zh.vbs` 开机守护，更新后无需人工干预）
+> 最后更新：2026-11-21（翻译注入接进 `auto_patch.py` 自动重打；此前 2026-11-17 适配 Zalo 26.11.12；脚本全面去硬编码 + 新增 `auto_patch.py` 自动重打 + `watch_zh.vbs` 开机守护，更新后无需人工干预）
 > 用途：供任何 AI 无缝接手 PC 支线。**接手 PC 相关任务必须先读本文件。**
 > 安卓主线的交接文档是仓库根目录的 `PROJECT_STATE.md`；两条支线互不干扰。
 > 远端：本目录内容在 https://github.com/guoxpeng/zalo-cn 的 `main` 分支 `pc/` 子目录下（2026-11-21 由独立的 `pc-zh` 分支并入 main，`pc-zh` 分支已删）。
@@ -59,7 +59,7 @@ zalopc/
     ├── 03_apply.py        生成 build_app：词库替换 + vi 字段替换 + 语言菜单改名（chunk/inline 文件全动态探测）
     ├── 04_pack.py         重打包 app_zh.asar（--unpack **/native/** + 按当前版本 unpacked 文件数校验）
     ├── 05_force_promo_zh.py  强制 zCloud 推广弹窗用本地中文（按内容特征全树扫描，不依赖哈希）
-    ├── auto_patch.py      ★自动补丁引擎：检测汉化状态→全流水线→安全替换→同步 SHA1→explorer 重启
+    ├── auto_patch.py      ★自动补丁引擎：检测汉化/翻译注入状态→全流水线（含翻译注入）→安全替换→同步 SHA1→explorer 重启；已汉化缺注入时只补翻译
     ├── auto_patch.log / auto_patch_state.json  自动补丁运行日志与状态（运行时生成）
     ├── bing/              bing-translate-api 的 node worker（worker.js + package.json）
     ├── overrides.json     人工修正词条（按 vi 原文覆盖，优先级最高）
@@ -161,6 +161,8 @@ ZALOPC_WAIT_IDLE=0 python auto_patch.py   # Zalo 运行时不等退出，只生�
 | 2026-09-27 | Zalo 自动更新至 26.9.10 覆盖汉化。按 §四 重打：解包新版、更新 03/05 哈希常量、01→02（仅 26 条新词条）→03→05→04，6309/6309 全汉化、1238 组内嵌双语、65 原生文件校验一致；替换安装后修正 `STR_ACCOUNT_MENU`（轮廓→个人资料）；新增 `05_force_promo_zh.py` 解决 zCloud 推广弹窗被服务端远端配置覆盖仍显示越南语的问题（4 文件 12 处 getter 去除远端取值）；成品 `work/dist_v2/app_zh.asar` |
 | 2026-11-17 | **诊断「汉化未生效」**：Zalo 已自动更新至 26.11.12（经 26.10.20），汉化包仍在 26.9.10 目录，运行的是新版原版 asar。**适配 26.11.12**：脚本全面去硬编码（03 chunk/inline 动态探测、04 版本自动探测、05 内容特征扫描），全量重打 6475/6475 全汉化、1267 处内嵌替换、70 原生文件字节一致、推广弹窗 12 处修正；替换安装成功（8 进程正常）。**新增自动方案**：`auto_patch.py` 检测/重打/替换引擎 + `watch_zh.vbs` 开机守护 + Startup 自启项，更新后自动重打无需人工。踩坑记录：raw 旧 chunk 致 01 断言失败、shutil.rmtree 触发 safe-delete 闸、原生文件 65→70、启动必须走 explorer.exe |
 | 2026-11-21 | **并入 main**： 分支（orphan）以 subtree 方式并入  的  子目录（含翻译注入 v1.0.0 ）； 分支随后删除，PC 内容此后随  走。 |
+| 2026-11-21 | **翻译注入接进自动重打**：`auto_patch.py` 增加翻译注入检测（`has_translate`）与注入（`inject_translate`）；全流程重打时在 03+05 之后、04 打包之前注入（随汉化一起进包）；已汉化但缺注入时走翻译单补丁（解包已装 asar→只注入→重打包，不动词库）。离线验证通过（注入+幂等+缺锚报错+检测真/假）。 |
+
 
 | 2026-11-21 | **翻译注入 v1.0.0**（`work/translate/`）：在汉化版 app.asar 上加实时翻译，听（收消息自动翻成中文，原文在上、译文在下框）+ 说（输入框边「译」按钮，中文翻成越南语填回输入框，不自动发）。注入脚本 `zalocn-translate.js`（语法已验；bilibili API 主 + Google 兜底；bilibili 回 `access-control-allow-origin: *`，渲染器可直调，不用 preload 桥；消息选择器 `.chat-item.to-me`+`data-qId` 缓存；输入框是 ProseMirror，用 execCommand 填回）。补丁进 asar 已验证（文件一致、原生文件 untouched）。安装器 `install-translate.ps1`（备份→解包→加脚本→重打包→替换→重启，重复跑先恢复再重打）+ `restore-translate.ps1` 一键恢复。**附带发现**：Zalo PC 自带完整 AI 翻译功能（60 条 STR_AI_TRANS 词条 + 独立语言模型 chunk；收消息自动翻 + 打字提示翻译 + 每会话设置；语言对含中文简体；自动翻译可能要 zCloud 套餐），老郭 21:49 明确“别管其他人，我要我自己的”，故做注入。等实机测试反馈再调（译文位置/按钮位置/文字提取可能要改）。 |
 
@@ -174,4 +176,4 @@ ZALOPC_WAIT_IDLE=0 python auto_patch.py   # Zalo 运行时不等退出，只生�
 - 听：MutationObserver 看 `.chat-item.to-me`，`data-qId` 做缓存键；译文插在原文下面（带蓝边的框）。
 - 说：往 `.normal-buttons-group` 插「译」按钮；ProseMirror 输入框用 `execCommand('insertText')` 填回，不自动发。
 - 配置：默认收→中文简体、译按钮→越南语、bilibili API（免密钥）；改目标语言目前改 `zalocn-translate.js` 里的 DEFAULTS。
-- 安装器在**现有汉化版** app.asar 上打补丁（汉化词条不动）；Zalo 更新后重跑一次即可。
+- 安装器在**现有汉化版** app.asar 上打补丁（汉化词条不动）；**已接进 `auto_patch.py` 自动重打（2026-11-21）**：更新后守护重打汉化时翻译注入一起恢复；已汉化但缺注入时只补翻译，不动词库。手动装仍可用 `install-translate.ps1`。

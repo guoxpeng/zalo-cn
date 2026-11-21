@@ -3,9 +3,18 @@
 
 职责：
   1. 自动探测最新安装的 Zalo 版本目录（Zalo-<x.y.z>）
-  2. 用二进制标记检测该版本的 app.asar 是否已汉化
-  3. 未汉化则全自动重打：解包 -> 动态拷贝词库 -> 01->02->03->05->04
-  4. 等 Zalo 进程退出后，备份原 asar 并替换为汉化包，然后可选重启 Zalo
+  2. 用二进制标记检测该版本的 app.asar 是否已汉化、是否已带翻译注入
+  3. 未汉化则全自动重打：解包 -> 动态拷贝词库 -> 01->02->03->05
+     -> 翻译注入 -> 04
+  4. 已汉化但缺翻译注入时，只做翻译注入（解包 -> 注入 -> 重打包），不动词库
+  5. 等 Zalo 进程退出后，备份原 asar 并替换为新包，然后可选重启 Zalo
+
+翻译注入（2026-11-21 接入）：往 app.asar 里加 zalocn-translate.js，
+收到的消息自动翻成中文（原文在上、译文在下框），输入框边加「译」按钮
+（点一下把中文翻成越南语填回输入框，不自动发）。翻译走用户自填的大模型
+API（默认 bilibili 公开接口，免密钥），不改 Zalo 登录/账号/网络逻辑。
+Zalo 更新后新版 asar 是原版（未汉化、无注入），下次检测自动走全流程重打，
+翻译随汉化一起恢复，无需手动重装。
 
 安全底线（与安卓主线 / PC_STATE.md 一致）：
   - 只改 UI 语言字符串；不碰登录/账号/加密/网络逻辑
@@ -41,6 +50,11 @@ STATE = os.path.join(HERE, "auto_patch_state.json")
 INSTALL_ROOT = r"C:/Users/laogu/AppData/Local/Programs/Zalo"
 MARK_HAN = 'text:"中文"'
 MARK_VIE = 'text:"Tiếng Việt"'
+# 翻译注入：JS 源文件（与本脚本同目录下的 translate/）与 asar 内的检测标记。
+TRANSLATE_JS = os.path.join(HERE, "translate", "zalocn-translate.js")
+TRANSLATE_MARK = "zalocn-translate.js"
+TRANSLATE_HTML = os.path.join("pc-dist", "compact-app.html")
+TRANSLATE_JS_DST = os.path.join("pc-dist", "zalocn-translate.js")
 PY = sys.executable
 
 
@@ -115,6 +129,89 @@ def is_hanhua(asar_path, chunk_bytes=8 * 1024 * 1024):
             tail = data[-256:]
     done = han > 0 and vie == 0
     return done, {"size": size, "han_marks": han, "vie_marks": vie}
+
+
+def has_translate(asar_path, chunk_bytes=8 * 1024 * 1024):
+    """检测 asar 是否已带翻译注入（找 zalocn-translate.js 标记）。
+    注入脚本与引用都含该标记，命中即认为已注入。"""
+    mark = TRANSLATE_MARK.encode()
+    tail = b""
+    with open(asar_path, "rb") as f:
+        while True:
+            buf = f.read(chunk_bytes)
+            if not buf:
+                break
+            data = tail + buf
+            if mark in data:
+                return True
+            tail = data[-256:]
+    return False
+
+
+def inject_translate(tree_dir):
+    """往已解包的 app 树里加翻译注入（不碰词库与原生文件）。
+    - 拷 translate/zalocn-translate.js -> pc-dist/zalocn-translate.js
+    - 在 pc-dist/compact-app.html 主 bundle 的 </script> 后加引用
+    已注入时跳过（幂等，可重复跑）。"""
+    if not os.path.isfile(TRANSLATE_JS):
+        raise RuntimeError("找不到翻译脚本 " + TRANSLATE_JS)
+    html_path = os.path.join(tree_dir, TRANSLATE_HTML)
+    js_dst = os.path.join(tree_dir, TRANSLATE_JS_DST)
+    if not os.path.isfile(html_path):
+        raise RuntimeError("解包树里没找到 " + TRANSLATE_HTML + "（版本不对？）")
+    shutil.copy2(TRANSLATE_JS, js_dst)
+    content = open(html_path, encoding="utf-8").read()
+    if TRANSLATE_MARK in content:
+        log("compact-app.html 已有翻译注入引用，跳过。")
+        return
+    anchor = '<script src="compact-app-pc.'
+    idx = content.find(anchor)
+    if idx < 0:
+        raise RuntimeError("compact-app.html 里没找到主 bundle 的 script 标签")
+    end = content.find("</script>", idx) + len("</script>")
+    content = (content[:end] + '<script src="zalocn-translate.js"></script>'
+               + content[end:])
+    open(html_path, "w", encoding="utf-8", newline="").write(content)
+    log("已往 compact-app.html 注入翻译脚本引用。")
+
+
+def npx_env():
+    """返回 (npx, env)，供 asar 解包/打包命令用。
+    与 run_pipeline 里的探测逻辑一致（单独抽出来给翻译单补丁复用）。"""
+    node_dir = find_node_dir()
+    env = dict(os.environ)
+    env["PATH"] = node_dir + os.pathsep + env.get("PATH", "")
+    npx = os.path.join(node_dir, "npx.cmd") if os.name == "nt" else "npx"
+    if not os.path.isfile(npx) and os.name == "nt":
+        npx = "npx.cmd"
+    return npx, env
+
+
+def build_translate_only(resources):
+    """已汉化但缺翻译注入时：解包已装 asar -> 只注入翻译 -> 重打包。
+    不跑 01/02/03/05（词库已是汉化好的，动它会坏数据）。
+    返回新 asar 路径。"""
+    orig_asar = os.path.join(resources, "app.asar")
+    npx, env = npx_env()
+    tmpdir = os.path.join(HERE, "translate_patch_tmp")
+    out_asar = os.path.join(HERE, "dist_v2", "app_zh_translate_only.asar")
+    wipe_dir(tmpdir)
+    os.makedirs(os.path.dirname(out_asar), exist_ok=True)
+    log("=== 翻译单补丁：解包已装 asar ===")
+    run_cmd([npx, "--yes", "@electron/asar", "extract", orig_asar, tmpdir],
+            env=env, timeout=900, label="asar extract (translate-only)")
+    inject_translate(tmpdir)
+    log("=== 翻译单补丁：重打包 ===")
+    run_cmd([npx, "--yes", "@electron/asar", "pack", tmpdir, out_asar,
+             "--unpack", "**/native/**"],
+            env=env, timeout=1200, label="asar pack (translate-only)")
+    wipe_dir(tmpdir)
+    if not os.path.isfile(out_asar):
+        raise RuntimeError("翻译单补丁未产出 asar")
+    if not has_translate(out_asar):
+        raise RuntimeError("新包翻译标记缺失，拒绝替换")
+    log("翻译单补丁生成: %s (%d bytes)" % (out_asar, os.path.getsize(out_asar)))
+    return out_asar
 
 
 def zalo_running():
@@ -197,12 +294,12 @@ def run_pipeline(resources):
     if not os.path.isfile(npx) and os.name == "nt":
         npx = "npx.cmd"
 
-    log("=== 1/6 解包原 app.asar -> extract/ ===")
+    log("=== 1/7 解包原 app.asar -> extract/ ===")
     wipe_dir(EXTRACT)
     run_cmd([npx, "--yes", "@electron/asar", "extract", orig_asar, EXTRACT],
             env=env, timeout=900, label="asar extract")
 
-    log("=== 2/6 动态拷贝词库 chunk -> raw/ ===")
+    log("=== 2/7 动态拷贝词库 chunk -> raw/ ===")
     # 只清理 lang-en.* / lang-vi.*，其余 raw 资产（seed 等）保留
     for pat in ("lang-en.*.js", "lang-vi.*.js"):
         for f in glob.glob(os.path.join(RAW, pat)):
@@ -215,18 +312,21 @@ def run_pipeline(resources):
     shutil.copy2(vi_chunks[0], RAW)
     log("  en=%s  vi=%s" % (os.path.basename(en_chunks[0]), os.path.basename(vi_chunks[0])))
 
-    log("=== 3/6 解析词库 (01) ===")
+    log("=== 3/7 解析词库 (01) ===")
     run_cmd([PY, "01_parse.py"], cwd=HERE, timeout=300, label="01_parse")
 
-    log("=== 4/6 翻译 (02，复用缓存) ===")
+    log("=== 4/7 翻译 (02，复用缓存) ===")
     run_cmd([PY, "02_translate.py"], cwd=HERE, timeout=1800, label="02_translate")
 
-    log("=== 5/6 打补丁 (03 + 05) ===")
+    log("=== 5/7 打补丁 (03 + 05) ===")
     wipe_dir(BUILD)  # 避免残留旧版文件混入（03 内部 rmtree 也会被跳过）
     run_cmd([PY, "03_apply.py"], cwd=HERE, timeout=600, label="03_apply")
     run_cmd([PY, "05_force_promo_zh.py"], cwd=HERE, timeout=300, label="05_force_promo")
 
-    log("=== 6/6 打包 + 字节校验 (04) ===")
+    log("=== 6/7 翻译注入（进 build_app，随 04 一起打包） ===")
+    inject_translate(BUILD)
+
+    log("=== 7/7 打包 + 字节校验 (04) ===")
     wipe_dir(DIST)
     env2 = dict(env)
     env2["ZALOPC_INSTALL"] = resources
@@ -315,42 +415,64 @@ def main():
     version, resources = vers[-1]
     asar = os.path.join(resources, "app.asar")
     done, info = is_hanhua(asar)
+    has_tr = has_translate(asar)
     status = {
         "latest_version": version,
         "resources": resources,
         "hanhua": done,
+        "translate": has_tr,
         "detail": info,
         "zalo_running": zalo_running(),
         "time": time.strftime("%Y-%m-%d %H:%M:%S"),
     }
-    log("检测: v%s 汉化=%s 标记(中=%d/越=%d) Zalo运行=%s" %
-        (version, done, info["han_marks"], info["vie_marks"], status["zalo_running"]))
+    log("检测: v%s 汉化=%s 翻译注入=%s 标记(中=%d/越=%d) Zalo运行=%s" %
+        (version, done, has_tr, info["han_marks"], info["vie_marks"],
+         status["zalo_running"]))
 
     if check_only:
         print("STATUS_JSON=" + json.dumps(status, ensure_ascii=False))
         return 0
 
-    if done and not force:
-        log("最新版本已汉化，无需操作。")
+    if done and has_tr and not force:
+        log("最新版本已汉化且已带翻译注入，无需操作。")
         write_state(dict(status, action="noop"))
         return 0
 
-    log("需要重打（版本 %s%s）" % (version, "，强制" if force else "，未汉化"))
+    if not done:
+        log("需要重打（版本 %s%s）" % (version, "，强制" if force else "，未汉化"))
+        try:
+            new_asar = run_pipeline(resources)
+            # 安装前二次确认新包确实是汉化的
+            ok, ninfo = is_hanhua(new_asar)
+            if not ok:
+                raise RuntimeError("新包汉化标记异常 中=%d/越=%d，拒绝替换" %
+                                   (ninfo["han_marks"], ninfo["vie_marks"]))
+            if not has_translate(new_asar):
+                raise RuntimeError("新包翻译标记缺失，拒绝替换")
+            log("新包校验: 中=%d/越=%d 翻译注入=是 OK" %
+                (ninfo["han_marks"], ninfo["vie_marks"]))
+            installed = install_patch(version, resources, new_asar)
+            write_state(dict(status, action="patched" if installed else "pending_install",
+                             new_asar=new_asar))
+            log("完成。" if installed else "补丁已生成，等待 Zalo 退出后安装。")
+            return 0 if installed else 3
+        except Exception as e:
+            log("自动补丁失败: %s" % e)
+            write_state(dict(status, action="failed", error=str(e)))
+            return 1
+
+    # 已汉化但缺翻译注入：只补翻译，不动词库
+    log("已汉化但缺翻译注入，只补翻译（版本 %s）" % version)
     try:
-        new_asar = run_pipeline(resources)
-        # 安装前二次确认新包确实是汉化的
-        ok, ninfo = is_hanhua(new_asar)
-        if not ok:
-            raise RuntimeError("新包汉化标记异常 中=%d/越=%d，拒绝替换" %
-                               (ninfo["han_marks"], ninfo["vie_marks"]))
-        log("新包校验: 中=%d/越=%d OK" % (ninfo["han_marks"], ninfo["vie_marks"]))
+        new_asar = build_translate_only(resources)
         installed = install_patch(version, resources, new_asar)
-        write_state(dict(status, action="patched" if installed else "pending_install",
+        write_state(dict(status, action="patched_translate" if installed
+                         else "pending_install_translate",
                          new_asar=new_asar))
-        log("完成。" if installed else "补丁已生成，等待 Zalo 退出后安装。")
+        log("完成。" if installed else "翻译补丁已生成，等待 Zalo 退出后安装。")
         return 0 if installed else 3
     except Exception as e:
-        log("自动补丁失败: %s" % e)
+        log("翻译单补丁失败: %s" % e)
         write_state(dict(status, action="failed", error=str(e)))
         return 1
 

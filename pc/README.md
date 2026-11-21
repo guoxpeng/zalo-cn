@@ -20,7 +20,7 @@
 - **说**：输入框边上加「译」按钮，中文翻成越南语填回输入框，不自动发；
 - 翻译走 bilibili 公开 API（免密钥），失败回落 Google；不改 Zalo 逻辑、不自动发消息。
 
-安装：把 `work/translate/` 里的三个文件放同一文件夹，关掉 Zalo，右键 `install-translate.ps1` 用 PowerShell 运行（自动备份、打补丁、重启 Zalo）。出问题跑 `restore-translate.ps1` 一键恢复。Zalo 自动更新后重跑一次即可。
+安装：把 `work/translate/` 里的三个文件放同一文件夹，关掉 Zalo，右键 `install-translate.ps1` 用 PowerShell 运行（自动备份、打补丁、重启 Zalo）。出问题跑 `restore-translate.ps1` 一键恢复。已接进 `auto_patch.py` 自动重打：Zalo 更新后守护自动重打汉化时，翻译注入会一起恢复，不用手动重装。
 
 ## 适配版本
 
