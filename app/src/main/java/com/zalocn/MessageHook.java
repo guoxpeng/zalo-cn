@@ -9,11 +9,15 @@ import android.app.PendingIntent;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
+import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.TypedValue;
+import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.FrameLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -131,6 +135,12 @@ public class MessageHook {
     /** 检查模式下正在翻译中的 ChatView 身份（防连点：翻译中再点发送直接吞掉）。 */
     private static final Set<Integer> translatingSends =
             Collections.synchronizedSet(new HashSet<Integer>());
+    /** 已挂上“译”按钮的输入栏（防重复加按钮；弱引用，输入栏回收即丢）。 */
+    private static final Map<Object, Boolean> translateBtnDone =
+            Collections.synchronizedMap(new WeakHashMap<Object, Boolean>());
+    /** “译”按钮正在翻译中的输入栏身份（防连点：翻译中再点直接吞掉）。 */
+    private static final Set<Integer> translatingInputs =
+            Collections.synchronizedSet(new HashSet<Integer>());
     /** 行 -> 消息映射（滚动停下后补翻用；弱引用，行回收即丢）。 */
     private static final Map<View, RowInfo> rowByView =
             Collections.synchronizedMap(new WeakHashMap<View, RowInfo>());
@@ -181,6 +191,11 @@ public class MessageHook {
             installSendHook(lpparam);
         } catch (Throwable t) {
             XposedBridge.log(TAG + " installSendHook fail: " + t);
+        }
+        try {
+            installTranslateButton(lpparam);
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + " installTranslateButton fail: " + t);
         }
     }
 
@@ -1055,6 +1070,171 @@ public class MessageHook {
                     }
                 });
         XposedBridge.log(TAG + " ChatInputBar send hooks installed, sendBtnId=" + sendBtnId);
+    }
+
+    // ============================================================
+    // 4. 输入框边“译”按钮：点按把中文翻成越语填回输入框，不自动发送
+    //    （WATransChat 式样：翻译先在输入框里看得见、改得了，发送就是普通一次点击，
+    //    模块不再拦截、不后台代发，从根上规避错发。）
+    // ============================================================
+
+    private static void installTranslateButton(final XC_LoadPackage.LoadPackageParam lpparam) throws Throwable {
+        final ClassLoader cl = lpparam.classLoader;
+        if (clsChatView == null) {
+            clsChatView = Class.forName("com.zing.zalo.ui.chat.ChatView", false, cl);
+        }
+        Class<?> clsInputBar = Class.forName("com.zing.zalo.ui.chat.widget.inputbar.ChatInputBar", false, cl);
+        XposedHelpers.findAndHookMethod(clsInputBar, "onAttachedToWindow",
+                new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) {
+                        try {
+                            attachTranslateButton(param.thisObject);
+                        } catch (Throwable t) {
+                            XposedBridge.log(TAG + " attachTranslateButton error: " + t);
+                        }
+                    }
+                });
+        XposedBridge.log(TAG + " ChatInputBar translate button hook installed");
+    }
+
+    /** 输入栏挂上后加一个“译”字按钮（只加一次；进出会话重复 attach 时靠表去重）。 */
+    private static void attachTranslateButton(Object bar) throws Exception {
+        if (bar == null || translateBtnDone.containsKey(bar)) {
+            return;
+        }
+        Object container = getField(bar, "a");   // FrameLayout 行容器
+        Object edit = getField(bar, "i");        // 输入框 EditText
+        Object sendBtn = getField(bar, "q");     // 发送按钮
+        if (!(container instanceof ViewGroup) || !(edit instanceof View) || !(sendBtn instanceof View)) {
+            return;
+        }
+        final ViewGroup row = (ViewGroup) container;
+        final View input = (View) edit;
+        final View send = (View) sendBtn;
+        final Context ctx = row.getContext();
+        // 发送按钮宽度（构造时写在 LayoutParams 里）= 右边距，让按钮落在发送键左边、不盖输入文字。
+        int sendW = 0;
+        try {
+            ViewGroup.LayoutParams lp = send.getLayoutParams();
+            if (lp != null) {
+                sendW = lp.width;
+            }
+        } catch (Throwable ignored) {
+        }
+        if (sendW <= 0) {
+            sendW = dp(ctx, 48);
+        }
+        final int gap = dp(ctx, 8);
+        final int btnW = dp(ctx, 40);
+        final int btnH = dp(ctx, 32);
+
+        final TextView btn = new TextView(ctx);
+        btn.setText("译");
+        btn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        btn.setTextColor(0xFFFFFFFF);
+        btn.setGravity(Gravity.CENTER);
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(0xFF0068FF);
+        bg.setCornerRadius(dp(ctx, 16));
+        btn.setBackground(bg);
+        FrameLayout.LayoutParams blp = new FrameLayout.LayoutParams(
+                btnW, btnH, Gravity.END | Gravity.CENTER_VERTICAL);
+        blp.rightMargin = sendW + gap;
+        row.addView(btn, blp);
+        // 输入框右内边距让出按钮位置，避免文字被按钮盖住（只加一次，靠 translateBtnDone 去重）。
+        input.setPadding(input.getPaddingLeft(), input.getPaddingTop(),
+                input.getPaddingRight() + btnW + gap * 2, input.getPaddingBottom());
+        btn.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                onTranslateButtonClick(input, btn);
+            }
+        });
+        translateBtnDone.put(bar, Boolean.TRUE);
+    }
+
+    /** “译”按钮点击：中文翻成越语填回输入框，不发送；发送拦截看到已填回的内容直接放行。 */
+    private static void onTranslateButtonClick(final View input, final TextView btn) {
+        try {
+            TranslateConfig cfg = TranslateConfig.loadForHook();
+            if (!cfg.enabled) {
+                Toast.makeText(input.getContext(), "请先开启“启用消息翻译”", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            CharSequence cs = (CharSequence) callMethod(input, "getText");
+            final String text = cs == null ? "" : cs.toString();
+            if (text.trim().length() == 0) {
+                Toast.makeText(input.getContext(), "输入框是空的", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            if (!containsHan(text)) {
+                Toast.makeText(input.getContext(), "输入已是越南语，无需翻译", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            if (!cfg.hasApi()) {
+                Toast.makeText(input.getContext(), "请先在“Zalo 汉化设置”里填 API 地址和模型", Toast.LENGTH_LONG).show();
+                return;
+            }
+            final Object chatView = findChatViewAncestor(input);
+            final int guardKey = chatView != null
+                    ? System.identityHashCode(chatView) : System.identityHashCode(input);
+            if (translatingInputs.contains(Integer.valueOf(guardKey))) {
+                return;
+            }
+            translatingInputs.add(Integer.valueOf(guardKey));
+            btn.setEnabled(false);
+            btn.setText("…");
+            final Context ctx = input.getContext();
+            final String threadId = chatView != null ? threadByChatView.get(chatView) : null;
+            TRANSLATE_POOL.execute(new Runnable() {
+                @Override
+                public void run() {
+                    TranslateConfig c2 = TranslateConfig.loadForHook();
+                    final String ctxStr = recentContext(threadId, text);
+                    final String vi = LlmClient.translate(c2, text, "zh", "vi", ctxStr);
+                    mainHandler().post(new Runnable() {
+                        @Override
+                        public void run() {
+                            translatingInputs.remove(Integer.valueOf(guardKey));
+                            btn.setEnabled(true);
+                            btn.setText("译");
+                            try {
+                                CharSequence cur = (CharSequence) callMethod(input, "getText");
+                                String curText = cur == null ? "" : cur.toString();
+                                if (!text.equals(curText)) {
+                                    return; // 用户已改输入，不动
+                                }
+                                if (vi == null) {
+                                    Toast.makeText(ctx, "翻译失败，请重试", Toast.LENGTH_SHORT).show();
+                                    return;
+                                }
+                                TranslateConfig c3 = TranslateConfig.loadForHook();
+                                String filled = c3.inputKeepOriginal ? text + "\n" + vi : vi;
+                                replaceInputText(input, filled);
+                                // 记为已检查过的填回内容：发送拦截看到它直接放行，不再重复翻译。
+                                if (chatView != null) {
+                                    reviewedFilled.put(Integer.valueOf(System.identityHashCode(chatView)), filled);
+                                }
+                                TranslateStore st = storeFor(input);
+                                if (st != null) {
+                                    st.putCached(text, "zh", "vi", vi);
+                                }
+                            } catch (Throwable t) {
+                                XposedBridge.log(TAG + " translate-button apply error: " + t);
+                            }
+                        }
+                    });
+                }
+            });
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + " onTranslateButtonClick error: " + t);
+        }
+    }
+
+    private static int dp(Context ctx, int v) {
+        return (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v,
+                ctx.getResources().getDisplayMetrics());
     }
 
     /** 返回 true = 吞掉这次点击（等翻译完再重发）。 */

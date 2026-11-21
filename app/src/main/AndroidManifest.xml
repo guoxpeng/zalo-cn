@@ -15,6 +15,7 @@
 
     <application
         android:label="Zalo 汉化"
+        android:icon="@mipmap/ic_launcher"
         android:allowBackup="false"
         android:extractNativeLibs="false">
 

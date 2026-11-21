@@ -28,7 +28,7 @@ import java.util.List;
 /**
  * 翻译功能设置界面（模块 APK 自带的启动器入口）。
  *
- * 纯代码写 UI，不依赖 XML 资源（构建脚本只链接 Manifest、不打包 res）。
+ * 纯代码写 UI，不依赖 XML 布局资源；图标走 res/mipmap（构建脚本用 aapt2 打包）。
  * 配置存在模块自身 prefs 里，LSPosed 重定向后仅 Zalo 进程可读，普通 App
  * 读不到；API 密钥只发往用户自己填的 API 地址。全部收到的消息与上下文
  * 都会发到你填的 API 地址——用中转服务的话，中转方能看到所有聊天内容。
@@ -46,6 +46,8 @@ public class TranslateSettingsActivity extends Activity {
     private CheckBox cbAutoOutgoing;
     private CheckBox cbReviewBeforeSend;
     private EditText etPhrases;
+    private EditText etCustomPrompt;
+    private CheckBox cbInputKeepOriginal;
     private TextView tvStatus;
     private Button btnNotif;
     private TranslateConfig lastCfg;
@@ -100,6 +102,17 @@ public class TranslateSettingsActivity extends Activity {
         etPhrases.setGravity(Gravity.TOP);
         root.addView(etPhrases, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        addTitle(root, "翻译提示词与“译”按钮");
+        addHint(root, "提示词会追加到每次翻译的系统提示词后，用来纠正直译错误（例如：地名按越南官方译名，不要直译；人名保留原文）。留空则不用。");
+        etCustomPrompt = new EditText(this);
+        etCustomPrompt.setMinLines(3);
+        etCustomPrompt.setGravity(Gravity.TOP);
+        etCustomPrompt.setHint("例如：地名用越南官方译名，不要直译；胡志明市、河内、大叻、保禄……");
+        root.addView(etCustomPrompt, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        cbInputKeepOriginal = addCheck(root, "“译”按钮同时保留中文原文（中文一行 + 越南语一行）");
+        addHint(root, "勾选：点“译”后输入框里是中文原文一行 + 越南语译文一行；不勾：只填越南语译文。两种都不会被发送拦截重复翻译，点发送直接发出去。");
 
         addTitle(root, "待办提醒");
         addHint(root, "精确闹钟取决于 Zalo 有没有精确闹钟权限（系统设置 → 应用 → Zalo → 闹钟与提醒）；没给的话提醒仍会响，但可能晚几分钟。提醒通知由本模块发，需要下面的通知权限。重启手机后，首次打开 Zalo 会自动重设未过期的提醒。");
@@ -203,6 +216,8 @@ public class TranslateSettingsActivity extends Activity {
         } else {
             etPhrases.setText(TranslateConfig.joinPhrases(phrases));
         }
+        etCustomPrompt.setText(cfg.customPrompt);
+        cbInputKeepOriginal.setChecked(cfg.inputKeepOriginal);
         // 首次打开设置页即生成提醒校验 token（之后 ReminderReceiver 强制校验）。
         cfg.reminderToken = TranslateConfig.ensureReminderToken(this);
         lastCfg = cfg;
@@ -225,6 +240,8 @@ public class TranslateSettingsActivity extends Activity {
         cfg.autoOutgoing = cbAutoOutgoing.isChecked();
         cfg.reviewBeforeSend = cbReviewBeforeSend.isChecked();
         cfg.phrases = TranslateConfig.parsePhrases(etPhrases.getText().toString());
+        cfg.customPrompt = etCustomPrompt.getText().toString().trim();
+        cfg.inputKeepOriginal = cbInputKeepOriginal.isChecked();
         if (cfg.reminderToken == null || cfg.reminderToken.length() == 0) {
             cfg.reminderToken = TranslateConfig.ensureReminderToken(this);
         }

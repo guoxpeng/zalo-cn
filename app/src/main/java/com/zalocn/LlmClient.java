@@ -71,6 +71,11 @@ public class LlmClient {
             }
             sys.append("只输出译文，不要解释、不要加引号、")
                .append("不要补充原文没有的内容；人名、地名、品牌名保留原文；语气保持口语自然。");
+            // 用户自定义提示词（设置页填）：追加到系统提示词后，纠正直译错误
+            // （如地名按越南官方译名）。空 = 不用。
+            if (cfg.customPrompt != null && cfg.customPrompt.trim().length() > 0) {
+                sys.append("\n另外，请遵守以下翻译要求：\n").append(cfg.customPrompt.trim());
+            }
             StringBuilder user = new StringBuilder();
             if (context != null && context.length() > 0) {
                 user.append("会话上下文（仅供消歧，不要翻译这部分）：\n").append(context).append("\n\n");

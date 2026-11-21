@@ -66,6 +66,11 @@ public class TranslateConfig {
     public boolean enabled = true;
     /** 发送前先检查译文：译文填回输入框，确认后点发送（默认开）。 */
     public boolean reviewBeforeSend = true;
+    /** 自定义翻译提示词：追加到每次翻译的系统提示词后（如地名按越南官方译名、
+     *  不要直译人名地名）。空 = 不用。 */
+    public String customPrompt = "";
+    /** 输入框“译”按钮：同时保留中文原文（中文一行 + 越南语一行）。关 = 只填越南语译文。 */
+    public boolean inputKeepOriginal = true;
 
     /** 历史记录翻译专用配置（空 = 沿用主配置，按项生效）。 */
     public String histBaseUrl = "";
@@ -119,6 +124,8 @@ public class TranslateConfig {
         c.autoOutgoing = src.autoOutgoing;
         c.enabled = src.enabled;
         c.reviewBeforeSend = src.reviewBeforeSend;
+        c.customPrompt = src.customPrompt;
+        c.inputKeepOriginal = src.inputKeepOriginal;
         c.histBaseUrl = src.histBaseUrl;
         c.histApiKey = src.histApiKey;
         c.histModel = src.histModel;
@@ -204,6 +211,8 @@ public class TranslateConfig {
         cfg.autoIncoming = !"false".equals(kv.get("autoIncoming"));
         cfg.autoOutgoing = !"false".equals(kv.get("autoOutgoing"));
         cfg.reviewBeforeSend = !"false".equals(kv.get("reviewBeforeSend"));
+        cfg.customPrompt = nonEmpty(kv.get("customPrompt"), "");
+        cfg.inputKeepOriginal = !"false".equals(kv.get("inputKeepOriginal"));
         cfg.histBaseUrl = nonEmpty(kv.get("histBaseUrl"), "");
         cfg.histApiKey = nonEmpty(kv.get("histApiKey"), "");
         cfg.histModel = nonEmpty(kv.get("histModel"), "");
@@ -224,6 +233,8 @@ public class TranslateConfig {
             cfg.autoIncoming = sp.getBoolean("autoIncoming", true);
             cfg.autoOutgoing = sp.getBoolean("autoOutgoing", true);
             cfg.reviewBeforeSend = sp.getBoolean("reviewBeforeSend", true);
+            cfg.customPrompt = nonEmpty(sp.getString("customPrompt", null), "");
+            cfg.inputKeepOriginal = sp.getBoolean("inputKeepOriginal", true);
             cfg.histBaseUrl = nonEmpty(sp.getString("histBaseUrl", null), "");
             cfg.histApiKey = nonEmpty(sp.getString("histApiKey", null), "");
             cfg.histModel = nonEmpty(sp.getString("histModel", null), "");
@@ -287,6 +298,8 @@ public class TranslateConfig {
             ed.putBoolean("autoIncoming", autoIncoming);
             ed.putBoolean("autoOutgoing", autoOutgoing);
             ed.putBoolean("reviewBeforeSend", reviewBeforeSend);
+            ed.putString("customPrompt", customPrompt);
+            ed.putBoolean("inputKeepOriginal", inputKeepOriginal);
             ed.putString("histBaseUrl", histBaseUrl);
             ed.putString("histApiKey", histApiKey);
             ed.putString("histModel", histModel);

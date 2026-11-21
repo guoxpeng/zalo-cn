@@ -127,12 +127,23 @@ echo "== 3. d8 -> classes2.dex"
   $(find "$WORK/classes/com" -name "*.class")
 mv "$WORK/classes.dex" "$WORK/classes2.dex"
 
-# ---------------------------------------------------------------- 4. aapt2 link
-echo "== 4. aapt2 link"
-"$AAPT2" link -o "$WORK/base.apk" \
-  --manifest "$MANIFEST" \
-  -I "$PLATFORM" \
-  --min-sdk-version 27 --target-sdk-version 34
+# ---------------------------------------------------------------- 4. aapt2 编译资源 + link
+echo "== 4. aapt2 compile res + link"
+RES_DIR="app/src/main/res"
+COMPILED_RES="$WORK/compiled_res.zip"
+if [ -d "$RES_DIR" ]; then
+  "$AAPT2" compile --dir "$RES_DIR" -o "$COMPILED_RES"
+  "$AAPT2" link -o "$WORK/base.apk" \
+    --manifest "$MANIFEST" \
+    -I "$PLATFORM" \
+    "$COMPILED_RES" \
+    --min-sdk-version 27 --target-sdk-version 34
+else
+  "$AAPT2" link -o "$WORK/base.apk" \
+    --manifest "$MANIFEST" \
+    -I "$PLATFORM" \
+    --min-sdk-version 27 --target-sdk-version 34
+fi
 
 # ---------------------------------------------------------------- 5. 组装
 echo "== 5. 组装 dex + assets"
