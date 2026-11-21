@@ -21,8 +21,9 @@ import java.util.List;
  * 翻译功能设置界面（模块 APK 自带的启动器入口）。
  *
  * 纯代码写 UI，不依赖 XML 资源（构建脚本只链接 Manifest、不打包 res）。
- * 保存后把 prefs 文件 chmod 644，Zalo 进程内的 Hook 才能跨 UID 读到配置。
- * API 密钥只存在本机，不上传、不外发；翻译请求直接从手机发到用户自己填的 API 地址。
+ * 配置存在模块自身 prefs 里，LSPosed 重定向后仅 Zalo 进程可读，普通 App
+ * 读不到；API 密钥只发往用户自己填的 API 地址。全部收到的消息与上下文
+ * 都会发到你填的 API 地址——用中转服务的话，中转方能看到所有聊天内容。
  */
 public class TranslateSettingsActivity extends Activity {
 
@@ -56,10 +57,10 @@ public class TranslateSettingsActivity extends Activity {
         setContentView(scroll);
 
         addTitle(root, "Zalo 汉化 · 翻译设置");
-        addHint(root, "翻译走你自己填的大模型 API（OpenAI 兼容接口）。地址、密钥、模型都存在本机，只发给你的 API 服务商。");
+        addHint(root, "翻译走你自己填的大模型 API（OpenAI 兼容接口）。配置存在模块自身 prefs，LSPosed 重定向后仅 Zalo 进程可读，普通 App 读不到；API 密钥只发往你自己填的 API 地址。全部收到的消息与上下文会发到你填的 API 地址，用中转服务的话中转方能看到所有聊天内容。");
 
         etBaseUrl = addField(root, "API 地址", "例如 https://api.openai.com/v1");
-        etApiKey = addField(root, "API 密钥", "sk-…（只存在本机）");
+        etApiKey = addField(root, "API 密钥", "sk-…（仅发往你填的 API 地址）");
         etApiKey.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
         etModel = addField(root, "模型", "例如 gpt-4o-mini");
 
