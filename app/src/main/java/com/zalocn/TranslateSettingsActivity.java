@@ -30,6 +30,9 @@ public class TranslateSettingsActivity extends Activity {
     private EditText etBaseUrl;
     private EditText etApiKey;
     private EditText etModel;
+    private EditText etHistBaseUrl;
+    private EditText etHistApiKey;
+    private EditText etHistModel;
     private CheckBox cbEnabled;
     private CheckBox cbAutoIncoming;
     private CheckBox cbAutoOutgoing;
@@ -70,6 +73,13 @@ public class TranslateSettingsActivity extends Activity {
         cbAutoOutgoing = addCheck(root, "发出中文消息，自动翻成越语再发");
         cbReviewBeforeSend = addCheck(root, "发送前先检查译文（译文填回输入框，确认后点发送）");
 
+        addTitle(root, "历史记录翻译（可选）");
+        addHint(root, "接收/历史翻译用这里，输入框发送用上面的主配置。某一项空着就用上面对应的项，三项都空=完全用主配置。");
+        etHistBaseUrl = addField(root, "历史翻译 API 地址（空=用上面）", "");
+        etHistApiKey = addField(root, "历史翻译 API 密钥（空=用上面）", "");
+        etHistApiKey.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        etHistModel = addField(root, "历史翻译模型（空=用上面）", "");
+
         addTitle(root, "快捷短语");
         addHint(root, "每行一条，格式：中文 | 越南语。越南语留空时，插入时按配置现翻。点输入框长按可调出短语。");
         etPhrases = new EditText(this);
@@ -103,6 +113,9 @@ public class TranslateSettingsActivity extends Activity {
         etBaseUrl.setText(cfg.baseUrl);
         etApiKey.setText(cfg.apiKey);
         etModel.setText(cfg.model);
+        etHistBaseUrl.setText(cfg.histBaseUrl);
+        etHistApiKey.setText(cfg.histApiKey);
+        etHistModel.setText(cfg.histModel);
         cbEnabled.setChecked(cfg.enabled);
         cbAutoIncoming.setChecked(cfg.autoIncoming);
         cbAutoOutgoing.setChecked(cfg.autoOutgoing);
@@ -121,6 +134,9 @@ public class TranslateSettingsActivity extends Activity {
         cfg.baseUrl = etBaseUrl.getText().toString().trim();
         cfg.apiKey = etApiKey.getText().toString().trim();
         cfg.model = etModel.getText().toString().trim();
+        cfg.histBaseUrl = etHistBaseUrl.getText().toString().trim();
+        cfg.histApiKey = etHistApiKey.getText().toString().trim();
+        cfg.histModel = etHistModel.getText().toString().trim();
         if (cfg.model.length() == 0) {
             cfg.model = TranslateConfig.DEFAULT_MODEL;
         }

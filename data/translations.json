@@ -10775,7 +10775,7 @@
  "str_total_media_size": "媒体总大小",
  "str_total_media_size_include": "媒体总大小包括：",
  "str_transfer_items_to_zcloud": "正在将 %s 传送到 %s...",
- "str_translation_branding": "Zalo人工智能翻译",
+ "str_translation_branding": "模块翻译",
  "str_translation_change_language": "更改语言",
  "str_translation_choose_language": "选择语言",
  "str_translation_detector_not_available": "功能与该设备不兼容",

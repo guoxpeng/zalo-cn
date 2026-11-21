@@ -69,6 +69,7 @@ public class MessageHook {
     static final int MENU_SHOW_ORIGINAL = 0x7E100001;
     static final int MENU_SHOW_TRANSLATED = 0x7E100002;
     static final int MENU_ADD_REMINDER = 0x7E100003;
+    static final int MENU_REMEMBER_LANG = 0x7E100004;
 
     /** 每会话保留的最近原文条数（供 AI 上下文精确翻译）。 */
     private static final int CONTEXT_SIZE = 5;
@@ -261,7 +262,7 @@ public class MessageHook {
                 return;
             }
         }
-        if (!cfg.hasApi()) {
+        if (!cfg.resolveForHistory().hasApi()) {
             return;
         }
         if (inFlight.size() >= MAX_IN_FLIGHT) {
@@ -281,7 +282,7 @@ public class MessageHook {
         TRANSLATE_POOL.execute(new Runnable() {
             @Override
             public void run() {
-                TranslateConfig c2 = TranslateConfig.loadForHook();
+                TranslateConfig c2 = TranslateConfig.loadForHook().resolveForHistory();
                 String translated = LlmClient.translate(c2, textRef, "auto", "zh", context);
                 if (translated != null && store != null) {
                     store.putCached(textRef, "auto", "zh", translated);
@@ -318,6 +319,11 @@ public class MessageHook {
         }
         Object curId = callMethod(cur, "getItemId");
         if (curId == null || !curId.equals(msgId)) {
+            return;
+        }
+        // 原生翻译已存在就丢弃自己的注入，绝不覆盖原生 o3（before-hook 路径
+        // 已有此检查，这里补上异步路径：回包期间原生翻译可能刚到）。
+        if (hasTranslation(vv3)) {
             return;
         }
         injectTranslation(vv3, translated, detectedLang(vv3));
@@ -459,6 +465,20 @@ public class MessageHook {
         if (rem != null) {
             items.add(rem);
         }
+        // 记住对方语言：在“中文/越语”之间切换该会话的记录（标签显示切换后的目标）。
+        TranslateStore menuStore = storeFor(menu);
+        String langThread = null;
+        Object menuMsgId = getField(vv3, "b");
+        if (menuMsgId != null) {
+            langThread = (String) getField(menuMsgId, "c");
+        }
+        String curLang = (menuStore != null && langThread != null)
+                ? menuStore.getContactLang(langThread) : null;
+        String langLabel = "zh".equals(curLang) ? "记住对方语言：越语" : "记住对方语言：中文";
+        Object langItem = mU56b.invoke(null, MENU_REMEMBER_LANG, iconTranslate, colorB60, langLabel);
+        if (langItem != null) {
+            items.add(langItem);
+        }
         if (!items.isEmpty()) {
             Object x1 = getField(menu, "X1");
             if (x1 instanceof List) {
@@ -471,7 +491,8 @@ public class MessageHook {
     /** 返回 true = 已处理，拦截原生分发。 */
     private static boolean onMenuClick(XC_MethodHook.MethodHookParam param) throws Exception {
         int id = ((Integer) param.args[0]).intValue();
-        if (id != MENU_SHOW_ORIGINAL && id != MENU_SHOW_TRANSLATED && id != MENU_ADD_REMINDER) {
+        if (id != MENU_SHOW_ORIGINAL && id != MENU_SHOW_TRANSLATED
+                && id != MENU_ADD_REMINDER && id != MENU_REMEMBER_LANG) {
             return false;
         }
         Object menu = param.thisObject;
@@ -505,6 +526,22 @@ public class MessageHook {
                 st.setHidden(key, false);
             }
             rebindChat(menu);
+            return true;
+        }
+        if (id == MENU_REMEMBER_LANG) {
+            Object mId = getField(vv3, "b");
+            String thread = mId == null ? null : (String) getField(mId, "c");
+            if (st != null && thread != null) {
+                Context mctx = ((View) menu).getContext();
+                String cur = st.getContactLang(thread);
+                if ("zh".equals(cur)) {
+                    st.setContactLang(thread, "vi");
+                    Toast.makeText(mctx, "已记为对方说越语", Toast.LENGTH_SHORT).show();
+                } else {
+                    st.setContactLang(thread, "zh");
+                    Toast.makeText(mctx, "已记为对方说中文，发出时不再自动翻译", Toast.LENGTH_SHORT).show();
+                }
+            }
             return true;
         }
         // 待办提醒：选时间 -> 存在模块本地。
@@ -649,6 +686,12 @@ public class MessageHook {
         if (sendingGuards.contains(guardKey)) {
             return false; // 翻译后重发的点击，直接放行
         }
+        final TranslateStore st = storeFor(view);
+        // 同语不译：该会话对方语言记为中文时，发出中文直接发，不翻译。
+        String sendThreadId = threadByChatView.get(chatView);
+        if (st != null && sendThreadId != null && "zh".equals(st.getContactLang(sendThreadId))) {
+            return false;
+        }
         Object edit = getField(chatView, "U1");
         if (edit == null) {
             return false;
@@ -670,7 +713,6 @@ public class MessageHook {
             recordSentText(text);
             return false;
         }
-        final TranslateStore st = storeFor(view);
         if (st != null) {
             String cached = st.getCached(text, "zh", "vi");
             if (cached != null) {
