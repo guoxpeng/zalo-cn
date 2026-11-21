@@ -56,8 +56,11 @@ MARK_HAN = 'text:"中文"'
 MARK_VIE = 'text:"Tiếng Việt"'
 # 翻译注入：JS 源文件（与本脚本同目录下的 translate/）与 asar 内的检测标记。
 # 主窗口加载 pc-dist/index.html（有严格 CSP），迷你窗口加载 compact-app.html；
-# 两个都要注入。主窗口的注入带 data-zalocn="main" 标记，has_translate 只认它
-# （过渡期：只注入了 compact-app 的旧包会被正确识别为“缺注入”而重打）。
+# 两个都要注入。主窗口的注入带 data-zalocn="main" 标记。
+# has_translate 是版本感知的：只认当前 TRANSLATE_VERSION 的 JS（JS 里的
+# log 行含 "zalocn translate v<版本>"）。JS 升版后，旧包会被识别为缺注入
+# 而自动重打，否则 JS 更新永远传不到已装的 asar 里。
+TRANSLATE_VERSION = "1.0.2"
 TRANSLATE_JS = os.path.join(HERE, "translate", "zalocn-translate.js")
 TRANSLATE_MARK = 'data-zalocn="main"'
 TRANSLATE_INDEX_HTML = os.path.join("pc-dist", "index.html")
@@ -141,10 +144,15 @@ def is_hanhua(asar_path, chunk_bytes=8 * 1024 * 1024):
 
 
 def has_translate(asar_path, chunk_bytes=8 * 1024 * 1024):
-    """检测 asar 是否已带翻译注入。只认主窗口（index.html）的注入标记
-    data-zalocn="main"。只注入了 compact-app 的旧包会返回 False，
+    """检测 asar 是否已带当前版本的翻译注入。两个条件都要满足：
+    1) 主窗口（index.html）的注入标记 data-zalocn="main" 在；
+    2) JS 是当前版本（JS 里的 log 行含 "zalocn translate v<TRANSLATE_VERSION>"）。
+    只注了 compact-app 的旧包、或 JS 还是旧版本的包，都返回 False，
     以便正确触发重打。"""
     mark = TRANSLATE_MARK.encode()
+    ver = ("zalocn translate v" + TRANSLATE_VERSION).encode()
+    found_mark = False
+    found_ver = False
     tail = b""
     with open(asar_path, "rb") as f:
         while True:
@@ -152,7 +160,11 @@ def has_translate(asar_path, chunk_bytes=8 * 1024 * 1024):
             if not buf:
                 break
             data = tail + buf
-            if mark in data:
+            if not found_mark and mark in data:
+                found_mark = True
+            if not found_ver and ver in data:
+                found_ver = True
+            if found_mark and found_ver:
                 return True
             tail = data[-256:]
     return False

@@ -1,10 +1,11 @@
-# Zalo PC 翻译注入安装器 v1.0.1
+# Zalo PC 翻译注入安装器 v1.0.2
 # 作用：在你现有的（已汉化）app.asar 上加翻译注入，不动汉化词条。
 # 听：收到的消息自动翻成中文（原文在上、译文在下框）
 # 说：输入框边上加「译」按钮，中文翻成越南语填回输入框，不自动发
 # 注入目标：主窗口 pc-dist/index.html（+ CSP 放行 bilibili API）
 #           与迷你窗口 pc-dist/compact-app.html 两个都注。
 #           只注 compact-app 的话主窗口里根本不加载（v1.0.0 的 bug，v1.0.1 修）。
+# v1.0.2：按钮持久化（切换会话重装）、观察器重挂、翻译失败重试 3 次后显示提示。
 # 用法：右键 → 使用 PowerShell 运行；或在 PowerShell 里 .\install-translate.ps1
 # 要求：已装 Node.js（npx 可用）；Zalo 先关掉（脚本会尝试先关，关不掉会停下等你手动关）
 

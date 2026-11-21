@@ -1,6 +1,7 @@
-// Zalo PC 翻译注入 v1.0.1 — 听（收消息自动翻）+ 说（译按钮）
+// Zalo PC 翻译注入 v1.0.2 — 听（收消息自动翻）+ 说（译按钮）
 // 注入方式：index.html 与 compact-app.html 里加 <script src="zalocn-translate.js">
 // （v1.0.1：主窗口加载 index.html，只注 compact-app 的话主窗口不加载）
+// v1.0.2：按钮持久化（切换会话重装）、观察器重挂、翻译失败重试 3 次后显示提示
 // 不改 Zalo 逻辑、不自动发消息；翻译走 bilibili 公开 API（免密钥），失败回落 Google。
 (function () {
   'use strict';
@@ -99,6 +100,8 @@
   // ---------- 听：收消息自动翻 ----------
   var translatedIds = {};   // data-qId -> true
   var textCache = {};      // 原文 -> 译文
+  var translatingIds = {}; // data-qId -> true（正在翻译中，防止重复请求）
+  var failCount = {};      // data-qId -> 失败次数（满 3 次后显示“翻译失败”并停止重试）
 
   function listContainer() {
     return document.querySelector('.message-view__list')
@@ -158,6 +161,24 @@
       item.appendChild(box);
     }
   }
+  function insertFailNote(item) {
+    if (item.querySelector(':scope > .zalocn-trans-box')) return;
+    var box = document.createElement('div');
+    box.className = 'zalocn-trans-box';
+    box.setAttribute('data-zalocn', 'fail');
+    box.style.cssText = 'margin:6px 0 2px 0;padding:4px 10px;font-size:12px;color:#9ca3af;';
+    box.textContent = '翻译失败（请检查网络/API），点输入框「译」可手动翻译';
+    var anchor = item.querySelector('.card') || item.querySelector('.msg-content') || item;
+    if (anchor && anchor !== item && anchor.parentNode) {
+      anchor.parentNode.insertBefore(box, anchor.nextSibling);
+    } else {
+      item.appendChild(box);
+    }
+  }
+  function markDone(item, qid) {
+    item.setAttribute('data-zalocn-done', '1');
+    if (qid) { translatedIds[qid] = true; delete translatingIds[qid]; }
+  }
   function processItem(item) {
     if (!CFG.autoTranslate) return;
     if (!item.classList || !item.classList.contains('chat-item')) return;
@@ -165,31 +186,45 @@
     if (!item.classList.contains('to-me')) return;           // 只翻收到的（to-me）
     if (item.getAttribute('data-zalocn-done')) return;
     var qid = item.getAttribute('data-qId') || '';
-    if (qid && translatedIds[qid]) { item.setAttribute('data-zalocn-done', '1'); return; }
+    if (qid && translatedIds[qid]) { markDone(item, qid); return; }
+    if (qid && translatingIds[qid]) return;                  // 正在翻译中，等回调
     var text = extractText(item);
     if (!text || !needsTranslate(text, CFG.incomingTarget)) {
-      item.setAttribute('data-zalocn-done', '1');
-      if (qid) translatedIds[qid] = true;
+      markDone(item, qid);
       return;
     }
-    item.setAttribute('data-zalocn-done', '1');
-    if (qid) translatedIds[qid] = true;
-    if (textCache[text]) { insertTranslation(item, textCache[text]); return; }
+    if (textCache[text]) { insertTranslation(item, textCache[text]); markDone(item, qid); return; }
+    if (qid) translatingIds[qid] = true;
     translateText(text, CFG.incomingTarget, function (ok, out) {
-      if (!ok || !out || out === text) return;
-      textCache[text] = out;
+      if (qid) delete translatingIds[qid];
       if (!document.contains(item)) return;
-      insertTranslation(item, out);
+      if (ok && out && out !== text) {
+        textCache[text] = out;
+        insertTranslation(item, out);
+        markDone(item, qid);
+        return;
+      }
+      // 失败：重试（最多 3 次），3 次都失败才显示提示并标记完成
+      var n = (qid ? (failCount[qid] || 0) : 0) + 1;
+      if (qid) failCount[qid] = n;
+      log('translate failed for qid', qid, 'attempt', n);
+      if (n >= 3) {
+        insertFailNote(item);
+        markDone(item, qid);
+      }
+      // 未满 3 次：不标记完成，下次扫描重试
     });
   }
   function scanAll() {
     var items = document.querySelectorAll('.chat-item.to-me');
     for (var i = 0; i < items.length; i++) processItem(items[i]);
   }
-  var observer = null;
+  var observer = null, observedRoot = null;
   function startObserver() {
     var root = listContainer();
+    if (observer && observedRoot === root && document.contains(root)) return; // 已在监听同一容器
     if (observer) observer.disconnect();
+    observedRoot = root;
     observer = new MutationObserver(function (muts) {
       for (var i = 0; i < muts.length; i++) {
         var m = muts[i];
@@ -209,7 +244,6 @@
   }
 
   // ---------- 说：译按钮 ----------
-  var btnInstalled = false;
   function getEditor() {
     return document.querySelector('.ProseMirror[contenteditable="true"]')
       || document.querySelector('.chat-input-container [contenteditable="true"]')
@@ -236,14 +270,16 @@
     }
     ed.focus();
   }
+  // 持久化安装：切换会话时输入区会重建，按钮会被一起销毁；
+  // 每轮检查按钮是否还在 DOM 里，不在就重装（不靠一次性 flag）。
   function installTranslateButton() {
-    if (btnInstalled) return;
+    var existing = document.querySelector('.zalocn-translate-btn');
+    if (existing && document.contains(existing)) return true;
     var group = document.querySelector('.normal-buttons-group')
       || document.querySelector('.chat-input-btns')
       || document.querySelector('.rtf-buttons-group');
     var ed = getEditor();
-    if (!group || !ed) return;
-    if (group.querySelector('.zalocn-translate-btn')) { btnInstalled = true; return; }
+    if (!group || !ed) return false;
     var btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'zalocn-translate-btn';
@@ -265,8 +301,8 @@
       });
     });
     group.insertBefore(btn, group.firstChild);
-    btnInstalled = true;
     log('translate button installed');
+    return true;
   }
 
   // ---------- 启动 ----------
@@ -275,16 +311,16 @@
       scanAll();
       startObserver();
       installTranslateButton();
-      // 输入框是后加载的，轮询补装按钮
-      var tries = 0;
-      var timer = setInterval(function () {
-        tries++;
-        installTranslateButton();
-        if (btnInstalled || tries > 40) clearInterval(timer);
-      }, 500);
-      // 切换会话时重扫
-      setInterval(scanAll, 3000);
-      log('zalocn translate v1.0.1 ready, incoming->' + CFG.incomingTarget + ', outgoing->' + CFG.outgoingTarget);
+      // 常驻巡检：切换会话会重建输入区与消息列表，按钮与观察器都要重挂；
+      // 翻译失败的条目也靠本轮重试（最多 3 次）。
+      setInterval(function () {
+        try {
+          installTranslateButton();
+          startObserver();
+          scanAll();
+        } catch (e) { log('tick error', e); }
+      }, 2000);
+      log('zalocn translate v1.0.2 ready, incoming->' + CFG.incomingTarget + ', outgoing->' + CFG.outgoingTarget);
     } catch (e) { log('boot error', e); }
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
