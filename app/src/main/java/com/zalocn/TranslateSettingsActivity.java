@@ -141,9 +141,9 @@ public class TranslateSettingsActivity extends Activity {
 
         addTitle(root, "翻译提示词");
         etCustomPrompt = new EditText(this);
-        etCustomPrompt.setMinLines(8);
+        etCustomPrompt.setMinLines(4);
         etCustomPrompt.setGravity(Gravity.TOP);
-        etCustomPrompt.setHint("可选。地名对照每行一对，如：老街-Lào Cai；也可写要求，如：地名按越南官方译名，不要直译");
+        etCustomPrompt.setHint("可选。地名对照写在一起，如：老街-Lào Cai，河内-Hà Nội；也可写要求，如：地名按越南官方译名，不要直译");
         root.addView(etCustomPrompt, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         addHint(root, "所有大模型模板共用一个提示词；免费引擎（Google/Bing/MyMemory）不用提示词。");
