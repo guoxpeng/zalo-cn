@@ -45,12 +45,22 @@ public class TranslateSettingsActivity extends Activity {
     private CheckBox cbEnabled;
     private CheckBox cbAutoIncoming;
     private Spinner spTargetLang;
+    private Spinner spPreset;
     private EditText etCustomPrompt;
     private CheckBox cbInputKeepOriginal;
     private TextView tvStatus;
     private Button btnNotif;
     private Button btnTestApi;
     private TranslateConfig lastCfg;
+
+    /** 大模型预设：{显示名, API 地址, 模型, 是否清空密钥}；最后一项“自定义”不填。 */
+    private static final String[][] PRESETS = {
+            {"bilibili 免密钥翻译", "https://index-translate.bilibili.com/v1",
+                    "Index-Translate-35B-A3B", "clear"},
+            {"OpenAI", "https://api.openai.com/v1", "gpt-4o-mini", "keep"},
+            {"DeepSeek", "https://api.deepseek.com/v1", "deepseek-chat", "keep"},
+            {"自定义", "", "", "keep"},
+    };
 
     /** 通知权限请求码（安卓 13+ 提醒通知要运行时申请）。 */
     private static final int REQ_POST_NOTIFICATIONS = 1001;
@@ -77,6 +87,18 @@ public class TranslateSettingsActivity extends Activity {
         addHint(root, "打开后，别人发来的消息会在原文下方多一行译文。");
 
         addTitle(root, "翻译引擎");
+        addHint(root, "大模型预设（点一下填好地址和模型）");
+        spPreset = new Spinner(this);
+        String[] presetNames = new String[PRESETS.length];
+        for (int i = 0; i < presetNames.length; i++) {
+            presetNames[i] = PRESETS[i][0];
+        }
+        ArrayAdapter<String> presetAdapter = new ArrayAdapter<String>(
+                this, android.R.layout.simple_spinner_item, presetNames);
+        presetAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        spPreset.setAdapter(presetAdapter);
+        root.addView(spPreset, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         etBaseUrl = addField(root, "API 地址", "例如 https://api.openai.com/v1");
         etApiKey = addField(root, "API 密钥", "sk-…（免密钥的公开 API 可空着）");
         etApiKey.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
@@ -213,6 +235,31 @@ public class TranslateSettingsActivity extends Activity {
         return true;
     }
 
+    /** 当前地址+模型对上哪个预设，对不上就是“自定义”（最后一项）。 */
+    private static int indexOfPreset(String baseUrl, String model) {
+        if (baseUrl != null && model != null) {
+            for (int i = 0; i < PRESETS.length - 1; i++) {
+                if (PRESETS[i][1].equals(baseUrl) && PRESETS[i][2].equals(model)) {
+                    return i;
+                }
+            }
+        }
+        return PRESETS.length - 1;
+    }
+
+    /** 选预设：把地址和模型填进输入框（bilibili 免密钥的清空密钥），立即保存。 */
+    private void applyPreset(int pos) {
+        if (pos < 0 || pos >= PRESETS.length - 1) {
+            return; // “自定义”不动
+        }
+        etBaseUrl.setText(PRESETS[pos][1]);
+        etModel.setText(PRESETS[pos][2]);
+        if ("clear".equals(PRESETS[pos][3])) {
+            etApiKey.setText("");
+        }
+        saveQuietly();
+    }
+
     /** 目标语代码 -> 下拉框位置，找不到默认 0（中文）。 */
     private static int indexOfTargetLang(String code) {
         if (code != null) {
@@ -230,6 +277,7 @@ public class TranslateSettingsActivity extends Activity {
         etBaseUrl.setText(cfg.baseUrl);
         etApiKey.setText(cfg.apiKey);
         etModel.setText(cfg.model);
+        spPreset.setSelection(indexOfPreset(cfg.baseUrl, cfg.model));
         etHistBaseUrl.setText(cfg.histBaseUrl);
         etHistApiKey.setText(cfg.histApiKey);
         etHistModel.setText(cfg.histModel);
@@ -264,6 +312,16 @@ public class TranslateSettingsActivity extends Activity {
             @Override
             public void onItemSelected(android.widget.AdapterView<?> p, View v, int pos, long id) {
                 saveQuietly();
+            }
+
+            @Override
+            public void onNothingSelected(android.widget.AdapterView<?> p) {
+            }
+        });
+        spPreset.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(android.widget.AdapterView<?> p, View v, int pos, long id) {
+                applyPreset(pos);
             }
 
             @Override
