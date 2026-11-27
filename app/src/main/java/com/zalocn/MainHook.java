@@ -598,7 +598,19 @@ public class MainHook implements IXposedHookLoadPackage {
         if (res == null) {
             return null;
         }
-        // 只有 Zalo 自身资源才允许更新语言标志
+        // 只有 Zalo 自身资源才允许更新语言标志。
+        // 3.0.10：这里原来只看 id >= 0x7f000000 就更新，WebView / 系统组件也是 0x7f 资源，
+        // 它们 locale 可能是 vi（越南语环境），一进来就把全局 viMode 打成 true，
+        // 结果是「界面汉化还在、消息翻译整体停摆」。因此再用资源包名确认是 Zalo 自己的。
+        boolean fromZalo;
+        try {
+            fromZalo = "com.zing.zalo".equals(res.getResourcePackageName(id));
+        } catch (Throwable t) {
+            fromZalo = true; // 取不到包名时按 Zalo 处理，保持旧行为
+        }
+        if (!fromZalo) {
+            return null; // 别人的资源，不翻也不动语言标志
+        }
         boolean vi = isViMode(res);
         viMode = vi;
         if (vi && !viModeLogged) {
