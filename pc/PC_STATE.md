@@ -177,3 +177,28 @@ ZALOPC_WAIT_IDLE=0 python auto_patch.py   # Zalo 运行时不等退出，只生�
 - 说：往 `.normal-buttons-group` 插「译」按钮；ProseMirror 输入框用 `execCommand('insertText')` 填回，不自动发。
 - 配置：默认收→中文简体、译按钮→越南语、bilibili API（免密钥）；改目标语言目前改 `zalocn-translate.js` 里的 DEFAULTS。
 - 安装器在**现有汉化版** app.asar 上打补丁（汉化词条不动）；**已接进 `auto_patch.py` 自动重打（2026-11-21）**：更新后守护重打汉化时翻译注入一起恢复；已汉化但缺注入时只补翻译，不动词库。手动装仍可用 `install-translate.ps1`。
+
+---
+
+## 📌 2026-11-27 · 翻译注入 v1.0.12：引擎顺序 + 混合消息误判 + 外科式打包 ✅
+
+**用户反馈**：PC 端消息不翻译。
+
+**接口实测（本机 IP）**：MyMemory 当日免费额度用尽（200 但返回 `MYMEMORY WARNING`）；
+Google gtx **429**；bilibili `index-translate` **可用**（必须浏览器 UA，Python 默认 UA 会被 **412**）。
+
+**改动**：
+1. 引擎顺序 **bilibili → mymemory → google**（原来 mymemory 优先，而它当天已死）；
+2. `fetchWithTimeout` 带失败原因码（`H###` / `T` 超时 / `E` 网络），状态行记录 `last=引擎:原因` 与失败原文前 28 字；
+3. 状态写 `localStorage['zalocn-status']`，开机 DOM 观测写 `localStorage['zalocn-boot']`
+   （Zalo 的 launcher 会拒绝 `--remote-debugging-port`，只能这样观测）；
+4. **混合消息误判修复**：目标是中文时改用「CJK 占比 ≥30% 即认为已是中文」，自己发的
+   「中文+越南语」双语消息不再进翻译队列；`insertFailNote` 对自己的消息直接 return，
+   不再给用户自己的消息盖「翻译失败」。
+
+**打包方式**：`asar pack` 全量重打 158MB/13k 文件在 Windows 上 35 分钟跑不完，
+改用 `pc/work/asar_patch_one.py` 只替换 asar 内单个文件的字节（**1 秒**）。
+坑：JSON 补位必须用**空格**（0x00 会让解析器报 Extra data）、必须 `MSYS_NO_PATHCONV=1`、
+改文件后要重算 `integrity.hash`。
+
+**实测**：v1.0.11 跑出 `ok=46 fail=12`，12 条全部是自己双语消息（假失败）→ v1.0.12 修掉。

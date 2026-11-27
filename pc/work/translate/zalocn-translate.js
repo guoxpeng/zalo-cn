@@ -1,4 +1,4 @@
-// Zalo PC 翻译注入 v1.0.7 — 听（收消息自动翻）+ 说（译按钮）+ 设置面板
+// Zalo PC 翻译注入 v1.0.10 — 听（收消息自动翻）+ 说（译按钮）+ 设置面板
 // 注入方式：index.html 与 compact-app.html 里加 <script src="zalocn-translate.js">
 // （v1.0.1：主窗口加载 index.html，只注 compact-app 的话主窗口不加载）
 // v1.0.2：按钮持久化（切换会话重装）、观察器重挂、翻译失败重试 3 次后显示提示
@@ -21,6 +21,7 @@
   'use strict';
   if (window.__zalocn_translate_loaded) return;
   window.__zalocn_translate_loaded = true;
+  try { localStorage.setItem('zalocn-status', 'ZALOCN boot v1.0.11 ' + Date.now()); } catch (e) {}
 
   // ---------- 配置（默认；可用 localStorage zalocn-config 覆盖） ----------
   var DEFAULTS = {
@@ -71,21 +72,103 @@
     queue.push({ text: text, target: targetLang, cb: cb });
     pump();
   }
+  // v1.0.8：原来的 bilibili 公开接口已不稳定（对普通请求返回 invalid_request，
+  // 或直接回原文），而 Google gtx 在本机被拦，导致“译文·中文”里显示原越南语。
+  // 现在：MyMemory（无需密钥，实测可用）优先 → bilibili → Google，且每一步都
+  // 校验译文是否真的换成了目标语言，没换就当失败继续兜底。
+  function srcCode(text) {
+    if (/[\u4e00-\u9fff]/.test(text)) return 'zh-CN';
+    if (/[\u0103\u00e2\u0111\u00ea\u00f4\u01a1\u01b0\u00e0-\u1ef9]/i.test(text)) return 'vi';
+    return 'en';
+  }
+  function tgtCode(target) {
+    if (target === 'zh-hans') return 'zh-CN';
+    if (target === 'zh-hant') return 'zh-TW';
+    return target;
+  }
+  // 纯数字/表情/极短消息不需要翻译，静默跳过（避免满屏“翻译失败”）。
+  function worthTranslating(text) {
+    var t = String(text || '').trim();
+    if (t.length < 4) return false;
+    return /[A-Za-z\u00C0-\u1EF9]{2,}/.test(t);
+  }
+  function isValidTranslation(src, target, out) {
+    if (!out) return false;
+    var a = String(src).replace(/\s+/g, ' ').trim();
+    var b = String(out).replace(/\s+/g, ' ').trim();
+    if (!b) return false;
+    if (a.toLowerCase() === b.toLowerCase()) return false;
+    if (target.indexOf('zh') === 0) return /[\u4e00-\u9fff]/.test(b);
+    if (target === 'vi') return /[a-zA-Z\u00C0-\u1EF9]/.test(b) && !/[\u4e00-\u9fff]/.test(b);
+    return true;
+  }
+  function callMyMemory(text, target, cb) {
+    var pair = srcCode(text) + '|' + tgtCode(target);
+    var url = 'https://api.mymemory.translated.net/get?q=' + encodeURIComponent(text) +
+      '&langpair=' + encodeURIComponent(pair);
+    fetchWithTimeout(url, null, 15000, function (ok, j) {
+      if (!ok || !j) { cb(false, typeof j === 'string' ? j : 'E'); return; }
+      var d = j.responseData || {};
+      var out = d.translatedText || '';
+      if (out && /INVALID|QUOTA|MYMEMORY WARNING/i.test(out)) { cb(false, ''); return; }
+      if (out) cb(true, String(out).trim()); else cb(false, '');
+    });
+  }
+  // v1.0.11：引擎顺序改为 bilibili 优先。
+  // 实测（2026-11-27）：MyMemory 免费额度按 IP 每天限额，超额后 200 返回 "MYMEMORY WARNING"；
+  // Google gtx 在本机被限流成 429；bilibili index-translate 无密钥可用且译文质量更好。
+  // 另外把状态写进 document.title，便于外部（自动化/支持）读到翻译是否在跑。
+  var STAT = { ok: 0, fail: 0, last: '', lastSrc: '' };
+  function tel() {
+    var line = 'ZALOCN v1.0.11 ok=' + STAT.ok + ' fail=' + STAT.fail + ' q=' + queue.length +
+      (STAT.last ? ' last=' + STAT.last : '') +
+      (STAT.lastSrc ? ' src=' + STAT.lastSrc : '');
+    try { localStorage.setItem('zalocn-status', line + ' t=' + Date.now()); } catch (e) {}
+  }
   function pump() {
     if (inflight >= 3 || !queue.length) return;
     var job = queue.shift();
     inflight++;
-    callBilibili(job.text, job.target, function (ok, out) {
-      if (ok) { inflight--; job.cb(true, out); pump(); return; }
-      callGoogle(job.text, job.target, function (ok2, out2) {
+    var NAMES = ['bilibili', 'mymemory', 'google'];
+    var tries = [
+      function (d) { callBilibili(job.text, job.target, d); },
+      function (d) { callMyMemory(job.text, job.target, d); },
+      function (d) { callGoogle(job.text, job.target, d); }
+    ];
+    var fails = [];
+    function next(i) {
+      if (i >= tries.length) {
         inflight--;
-        job.cb(ok2, out2);
+        STAT.fail++;
+        STAT.last = 'all-failed(' + fails.join(',') + ')';
+        tel();
+        job.cb(false, '');
         pump();
+        return;
+      }
+      tries[i](function (ok, out) {
+        if (ok && isValidTranslation(job.text, job.target, out)) {
+          inflight--;
+          STAT.ok++;
+          STAT.last = '';
+          tel();
+          job.cb(true, out);
+          pump();
+          return;
+        }
+        fails.push(NAMES[i] + ':' + (typeof out === 'string' && out.length <= 8 ? out : '-'));
+        if (!STAT.lastSrc) { STAT.lastSrc = String(job.text).replace(/\s+/g, ' ').slice(0, 28); }
+        next(i + 1);
       });
-    });
+    }
+    next(0);
   }
+  // v1.0.9：bilibili 官方用法是“把指令写在 user 消息里”，而不是 system role
+  // （模型会对纯 system 指令给出“保留原文/只润色”的结果）。同时带上官方要求的
+  // chat_template_kwargs.enable_thinking=false，避免思考文本替代译文。
   function systemPrompt(target) {
-    var p = 'You are a translator. Translate the user message into ' + langName(target) + '. Output ONLY the translation, no explanation, no quotes, no extra text. Keep placeholders, numbers, links and line breaks unchanged.';
+    var p = '请将以下文本翻译为' + langName(target) +
+      '，直接输出翻译结果，不要进行任何解释。保留占位符、数字、链接与换行不变。';
     if (CFG.customPrompt) p += '\n另外，请遵守以下翻译要求：' + CFG.customPrompt;
     return p;
   }
@@ -108,14 +191,14 @@
       cb(ok, val);
     }
     if (ctrl) {
-      timer = setTimeout(function () { try { ctrl.abort(); } catch (e) {} finish(false, ''); }, ms);
+      timer = setTimeout(function () { try { ctrl.abort(); } catch (e) {} finish(false, 'T'); }, ms);
     } else {
-      timer = setTimeout(function () { finish(false, ''); }, ms);
+      timer = setTimeout(function () { finish(false, 'T'); }, ms);
     }
     fetch(url, opts)
-      .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function (r) { if (!r.ok) throw new Error('H' + r.status); return r.json(); })
       .then(function (j) { finish(true, j); })
-      .catch(function () { finish(false, ''); });
+      .catch(function (e) { finish(false, String((e && e.message) || 'E').slice(0, 8)); });
   }
   function callBilibili(text, target, cb) {
     var headers = { 'Content-Type': 'application/json' };
@@ -125,13 +208,15 @@
       body: JSON.stringify({
         model: CFG.model,
         messages: [
-          { role: 'system', content: systemPrompt(target) },
-          { role: 'user', content: text }
+          { role: 'user', content: systemPrompt(target) + '\n\n' + text }
         ],
-        stream: false
+        temperature: 0.0,
+        max_tokens: 1024,
+        stream: false,
+        chat_template_kwargs: { enable_thinking: false }
       })
     }, 15000, function (ok, j) {
-      if (!ok || !j) { cb(false, ''); return; }
+      if (!ok || !j) { cb(false, typeof j === 'string' ? j : 'E'); return; }
       var out = j && j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content;
       if (out) cb(true, String(out).trim()); else cb(false, '');
     });
@@ -140,7 +225,7 @@
     var tl = target === 'zh-hans' ? 'zh-CN' : target;
     fetchWithTimeout('https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=' + encodeURIComponent(tl) + '&dt=t&q=' + encodeURIComponent(text),
       null, 15000, function (ok, j) {
-      if (!ok || !j) { cb(false, ''); return; }
+      if (!ok || !j) { cb(false, typeof j === 'string' ? j : 'E'); return; }
       var out = '';
       try { out = j[0].map(function (x) { return x[0]; }).join(''); } catch (e) {}
       if (out) cb(true, out); else cb(false, '');
@@ -205,7 +290,16 @@
   function needsTranslate(text, target) {
     if (!text || text.length < 1) return false;
     if (text.length > 2000) return false;
-    if (target === 'zh-hans' || target === 'zh-hant') return !isChinese(text);
+    if (target === 'zh-hans' || target === 'zh-hant') {
+      // v1.0.12：自己发的消息是「中文 + 越南语」双语（保留原文发送），
+      // 用 isChinese（≥50%）判定不够，会把混合消息排进翻译队列 →
+      // 三个引擎都返回原文 → 判定失败 → 3 次后给用户自己的消息盖上"翻译失败"。
+      // 改成 CJK 占比 ≥ 30% 就认为已经是中文，不翻。
+      var m = text.match(/[\u4e00-\u9fff]/g);
+      var cjk = m ? m.length : 0;
+      var visible = text.replace(/\s/g, '').length || 1;
+      return (cjk / visible) < 0.3;
+    }
     if (target === 'vi') return !/[àáâãèéêìíòóôõùúýỳỹỵựửữừứơớờởỡợảấầẩẫậắằẳẵặẹẻẽếềểễệỉịọỏốồổỗộớờởỡợụủứừửữựỳỵỷỹ]/i.test(text) && !hasCJK(text) ? true : !hasCJK(text);
     return true;
   }
@@ -232,6 +326,7 @@
   }
   function insertFailNote(item) {
     if (item.querySelector(':scope > .zalocn-trans-box')) return;
+    if (isOutgoing(item)) return;   // 自己的消息不插"翻译失败"，避免误伤
     var box = document.createElement('div');
     box.className = 'zalocn-trans-box';
     box.setAttribute('data-zalocn', 'fail');
@@ -259,7 +354,7 @@
     if (qid && translatedIds[qid]) { markDone(item, qid); return; }
     if (qid && translatingIds[qid]) return;                  // 正在翻译中，等回调
     var text = extractText(item);
-    if (!text || !needsTranslate(text, CFG.incomingTarget)) {
+    if (!text || !needsTranslate(text, CFG.incomingTarget) || !worthTranslating(text)) {
       markDone(item, qid);
       return;
     }
@@ -574,7 +669,20 @@
       try { startObserver(); } catch (e) { log('tick observer error', e); }
       try { scanAll(); } catch (e) { log('tick scan error', e); }
     }, 2000);
-    log('zalocn translate v1.0.7 ready, incoming->' + CFG.incomingTarget + ', outgoing->' + CFG.outgoingTarget);
+    // 诊断用：把 DOM 观测结果落到 localStorage（无 DevTools 时唯一的观测通道）
+    try {
+      var _c = listContainer();
+      localStorage.setItem('zalocn-boot', JSON.stringify({
+        v: '1.0.11',
+        msgs: document.querySelectorAll('[data-qId]').length,
+        list: _c ? String(_c.id || _c.className || _c.tagName).slice(0, 60) : 'none',
+        btn: !!document.querySelector('.zalocn-translate-btn'),
+        group: !!document.querySelector('.normal-buttons-group'),
+        auto: CFG.autoTranslate,
+        href: location.href.slice(-40)
+      }));
+    } catch (e) {}
+    log('zalocn translate v1.0.10 ready, incoming->' + CFG.incomingTarget + ', outgoing->' + CFG.outgoingTarget);
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
   else boot();
