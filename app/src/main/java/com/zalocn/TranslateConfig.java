@@ -43,6 +43,18 @@ import de.robv.android.xposed.XposedBridge;
 public class TranslateConfig {
 
     static final String TAG = "[ZALO-ZH]";
+
+    /**
+     * 设置界面进程里不一定存在 XposedBridge（模块 APP 单独启动时没有被框架注入），
+     * 直接调用会抛 NoClassDefFoundError 导致设置界面闪退，这里兜底退回 android.util.Log。
+     */
+    static void logSafe(String msg) {
+        try {
+            XposedBridge.log(msg);
+        } catch (Throwable ignored) {
+            android.util.Log.w("ZALO-ZH", msg);
+        }
+    }
     static final String PREFS_NAME = "zalocn_translate";
     /** 旧跨进程路径（仅作尽力回退；安卓 16 上 SELinux 会拦）。 */
     static final String PREFS_FILE = "/data/data/com.zalocn/shared_prefs/zalocn_translate.xml";
@@ -151,7 +163,7 @@ public class TranslateConfig {
                     xsp = new XSharedPreferences("com.zalocn", PREFS_NAME);
                     xsp.reload();
                 } catch (Throwable t) {
-                    XposedBridge.log(TAG + " XSharedPreferences unavailable, fallback to file path: " + t);
+                    logSafe(TAG + " XSharedPreferences unavailable, fallback to file path: " + t);
                     xsp = null;
                 }
             }
@@ -166,7 +178,7 @@ public class TranslateConfig {
                 } catch (Throwable t) {
                     if (!xspLogged) {
                         xspLogged = true;
-                        XposedBridge.log(TAG + " XSharedPreferences read fail, fallback to file path: " + t);
+                        logSafe(TAG + " XSharedPreferences read fail, fallback to file path: " + t);
                     }
                     xsp = null;
                 }
@@ -186,7 +198,7 @@ public class TranslateConfig {
             cachedMtime = mtime;
             return cfg;
         } catch (Throwable t) {
-            XposedBridge.log(TAG + " load config fail: " + t);
+            logSafe(TAG + " load config fail: " + t);
             return cached != null ? cached : new TranslateConfig();
         }
     }
@@ -242,7 +254,7 @@ public class TranslateConfig {
             cfg.outgoingTargetLang = nonEmpty(sp.getString("outgoingTargetLang", null), "vi");
             cfg.uiLocalize = sp.getBoolean("uiLocalize", true);
         } catch (Throwable t) {
-            XposedBridge.log(TAG + " load settings config fail: " + t);
+            logSafe(TAG + " load settings config fail: " + t);
         }
         return cfg;
     }
@@ -261,7 +273,7 @@ public class TranslateConfig {
         try {
             return ctx.getSharedPreferences(PREFS_NAME, Context.MODE_WORLD_READABLE);
         } catch (SecurityException e) {
-            XposedBridge.log(TAG + " MODE_WORLD_READABLE not supported, fallback MODE_PRIVATE: " + e);
+            logSafe(TAG + " MODE_WORLD_READABLE not supported, fallback MODE_PRIVATE: " + e);
             return ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         }
     }
@@ -284,7 +296,7 @@ public class TranslateConfig {
             ed.putBoolean("uiLocalize", uiLocalize);
             ed.commit();
         } catch (Throwable t) {
-            XposedBridge.log(TAG + " save config fail: " + t);
+            logSafe(TAG + " save config fail: " + t);
         }
     }
 

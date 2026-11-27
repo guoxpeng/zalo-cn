@@ -40,10 +40,14 @@ VERSION_NAME="${VERSION_NAME:-3.0.0}"
 
 # ---------------------------------------------------------------- 工具定位
 tool() { # tool <build-tools-dir> <name>
+  # 注意：Git Bash 下 SDK 里的 .bat 常常没有执行位（NTFS/umask），
+  # 只用 -x 判断会把 d8/apksigner 判成缺失，所以退一步用 -f。
   local bt="$1" name="$2"
   if   [ -x "$bt/$name" ];     then echo "$bt/$name"
   elif [ -x "$bt/$name.exe" ]; then echo "$bt/$name.exe"
+  elif [ -f "$bt/$name.exe" ]; then echo "$bt/$name.exe"
   elif [ -x "$bt/$name.bat" ]; then echo "$bt/$name.bat"
+  elif [ -f "$bt/$name.bat" ]; then echo "$bt/$name.bat"
   else echo ""; fi
 }
 

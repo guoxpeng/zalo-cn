@@ -206,12 +206,17 @@ public class MainHook implements IXposedHookLoadPackage {
 
         // hook Application.attachBaseContext 以尽早持有应用 Context（备用）
         try {
-            XposedHelpers.findAndHookMethod(Application.class, "attachBaseContext", Context.class,
-                    new XC_MethodHook() {
+            // attachBaseContext 声明在 ContextWrapper，不在 Application 上。
+            // Vector 的 legacy 桥只在目标类自身查找，findAndHookMethod 会抛
+            // NoSuchMethodError；用 HookUtil 沿父类链找。
+            if (!HookUtil.hookDeep(Application.class, "attachBaseContext",
+                    new Class<?>[]{Context.class}, new XC_MethodHook() {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
                         }
-                    });
+                    })) {
+                XposedBridge.log(TAG + " attachBaseContext not found (non-fatal)");
+            }
         } catch (Throwable t) {
             XposedBridge.log(TAG + " attachBaseContext hook fail: " + t);
         }
@@ -416,10 +421,13 @@ public class MainHook implements IXposedHookLoadPackage {
                     }
                 }
             };
-            Object[] args = new Object[params.length + 1];
-            System.arraycopy(params, 0, args, 0, params.length);
-            args[params.length] = hook;
-            XposedHelpers.findAndHookMethod(clazz, method, args);
+            // 有些重载（如 Resources#getText(int, Theme)）在 Android 16 上
+            // 已不存在或是 @hide，findAndHookMethod 会直接抛 NoSuchMethodError。
+            // hookDeep 沿父类链查找并返回布尔值，缺失时静默跳过，不中断后续 hook。
+            if (!HookUtil.hookDeep(clazz, method, params, hook)) {
+                XposedBridge.log(TAG + " hook skipped (method absent): "
+                        + clazz.getName() + "." + method);
+            }
         } catch (Throwable t) {
             XposedBridge.log(TAG + " hook " + clazz.getName() + "." + method + " fail: " + t);
         }

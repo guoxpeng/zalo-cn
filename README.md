@@ -9,6 +9,20 @@
 
 ---
 
+## 🔧 v3.0.9：修「界面一半中文一半英文」
+
+> 完整说明见 [RELEASE_NOTES_v3.0.9.md](RELEASE_NOTES_v3.0.9.md)。
+
+3.0.8 及更早版本里，模块的编译期桩把 `XposedBridge.hookMethod` 的参数写成了 `Method`
+（真实 API 是 `Member`），编译出的调用点描述符对不上，运行时抛 `NoSuchMethodError` 又被静默吞掉，
+导致**所有直接调 `hookMethod` 的 hook 全部失效**——资源表汉化（`Resources.getText/getString`）、
+聊天消息 hook（`ChatRow.setMessage`）都在里面，于是出现「搜索页/我的文档页还是英文，
+但聊天又能翻译」的怪现象。3.0.9 把桩改对、并给兜底逻辑补上日志，资源表汉化的 12697 条重新生效。
+
+> **升级后务必强制停止 Zalo 再重开**，模块只在进程新建时注入。
+
+---
+
 ## 🎉 v3.0.0 重磅更新：消息也能翻了
 
 > 完整更新说明见 [RELEASE_NOTES_v3.0.0.md](RELEASE_NOTES_v3.0.0.md)。
@@ -63,7 +77,7 @@ Zalo 自带「语言」设置（Tiếng Việt / English），模块跟它走：
 
 ## 支持版本
 
-- 实测 **Zalo 26.11.01**，Android 16 真机（联想 Y70 新一代）验证
+- 实测 **Zalo 26.11.02**，Android 16 真机（联想 XT2611-1）验证；26.11.01 / 26.08.x 亦可用
 - hook 的是系统层方法，不依赖具体 Zalo 版本号，26.x 新老版本大概率通用
 - 系统要求：**Android 8.1+**，需 Root + **LSPosed / Vector**
 
@@ -241,6 +255,8 @@ SKIP_BUILD=1 bash build/publish.sh
   网页词库，体积翻倍且违背「只改显示、不碰执行逻辑」的原则，故不做。
 - **少数写死在自定义控件里的文本**（如聊天列表里的「My Documents」会话名）可能漏翻，
   这类文本不走 `TextView.setText`，需要单独定位控件。遇到请提 Issue 附截图。
+- **3.0.9 遗留**：`data/src_map_compact.json` 的越南语侧是空的（应为 9360 条），
+  所以把 Zalo 界面语言切成 Tiếng Việt 时，服务器下发/写死的文本无法汉化；英文界面不受影响。
 
 ---
 

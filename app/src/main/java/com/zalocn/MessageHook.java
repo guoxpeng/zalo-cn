@@ -101,6 +101,12 @@ public class MessageHook {
 
     /** 正在翻译中的消息键（防重复发请求）。 */
     private static final Set<String> inFlight = Collections.synchronizedSet(new HashSet<String>());
+    /**
+     * 新版本 Zalo 的 o7g 值类已变更，无法构造原生译文槽时用弱引用记下
+     * 我们注入过译文的消息，避免重复翻译，也让长按菜单仍能显示“隐藏译文”。
+     */
+    private static final Map<Object, Boolean> injectedFallback =
+            Collections.synchronizedMap(new WeakHashMap<Object, Boolean>());
     /** 全模块共用的固定翻译线程池（接收/发送/短语现翻都走它，不再 new Thread）。 */
     private static final ExecutorService TRANSLATE_POOL = Executors.newFixedThreadPool(3);
     /** 同时在途的翻译请求上限：超过时本次不发起，等用户滚动回来重新绑定时再触发。 */
@@ -157,7 +163,7 @@ public class MessageHook {
         try {
             installTranslateButton(lpparam);
         } catch (Throwable t) {
-            XposedBridge.log(TAG + " installTranslateButton fail: " + t);
+                XposedBridge.log(TAG + " installTranslateButton fail: " + t);
         }
     }
 
@@ -167,13 +173,40 @@ public class MessageHook {
 
     private static void installRowHook(final XC_LoadPackage.LoadPackageParam lpparam) throws Throwable {
         final ClassLoader cl = lpparam.classLoader;
-        clsVv3 = Class.forName("vv3", false, cl);
-        clsP7g = Class.forName("p7g", false, cl);
-        clsO7g = Class.forName("o7g", false, cl);
-        clsChatRow = Class.forName("com.zing.zalo.ui.chat.chatrow.ChatRow", false, cl);
-        clsChatRowText = Class.forName("com.zing.zalo.ui.chat.chatrow.ChatRowText", false, cl);
-        ctorP7g = clsP7g.getConstructor(String.class, String.class, boolean.class, HashMap.class);
-        ctorO7g = clsO7g.getConstructor(String.class, String.class);
+        // 逐步解析，任何一步失败只禁用对应功能，绝不能中断整段安装（否则气泡 hook 装不上，
+        // 自动翻译就直接失效）。
+        // 26.11.12 起消息对象从 vv3 改名为 ry3；两个名字都试，老版本仍可用。
+        clsVv3 = firstClass(cl, "ry3", "vv3");
+        if (clsVv3 == null) {
+            XposedBridge.log(TAG + " message class (ry3/vv3) not found");
+        }
+        try {
+            clsChatRow = Class.forName("com.zing.zalo.ui.chat.chatrow.ChatRow", false, cl);
+            clsChatRowText = Class.forName("com.zing.zalo.ui.chat.chatrow.ChatRowText", false, cl);
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + " ChatRow not found: " + t);
+        }
+        // 译文槽对象：旧版 p7g，新版 mdg（构造签名相同）。
+        clsP7g = firstClass(cl, "mdg", "p7g");
+        if (clsP7g != null) {
+            ctorP7g = findTranslationCtor(clsP7g);
+        }
+        if (ctorP7g == null) {
+            XposedBridge.log(TAG + " translation slot ctor unavailable, fallback to inline text");
+        }
+        // 旧版 o7g(String,String) 在新版已不存在；拿不到就走兜底显示，不中断其它 hook。
+        clsO7g = firstClass(cl, "o7g");
+        if (clsO7g != null) {
+            try {
+                ctorO7g = clsO7g.getConstructor(String.class, String.class);
+            } catch (Throwable ignored) {
+                ctorO7g = null;
+            }
+        }
+        if (clsVv3 == null || clsChatRow == null) {
+            XposedBridge.log(TAG + " row hook skipped (missing core classes)");
+            return;
+        }
         try {
             Class<?> core = Class.forName("com.zing.zalocore.CoreUtility", false, cl);
             Field f = core.getField("i");
@@ -185,7 +218,7 @@ public class MessageHook {
             XposedBridge.log(TAG + " selfUid unknown, own-message echo heuristic active: " + t);
         }
 
-        XposedHelpers.findAndHookMethod(clsChatRow, "setMessage", clsVv3,
+        boolean rowHooked = HookUtil.hookDeep(clsChatRow, "setMessage", new Class<?>[]{clsVv3},
                 new XC_MethodHook() {
                     @Override
                     protected void beforeHookedMethod(MethodHookParam param) {
@@ -196,26 +229,63 @@ public class MessageHook {
                         }
                     }
                 });
-        XposedBridge.log(TAG + " ChatRow.setMessage hook installed");
+        XposedBridge.log(TAG + " ChatRow.setMessage hook " + (rowHooked ? "installed" : "NOT installed"));
 
         // 原文在上、译文在下：原生 I2() 的逻辑是“有译文时主文本 = 译文、抽屉 = 原文”，
         // 用户要的是反过来。在 I2() 算完之后、z2() 建布局之前把 n7/w7 对调。
         // I2() 每次重算都从 N0()/B2() 读新值，对调幂等；f2() 调 I2() 在先、i2()/z2() 建布局在后，
         // 同一次绑定内一定赶得上。
-        Class<?> clsChatRowHasCaption = Class.forName(
-                "com.zing.zalo.ui.chat.chatrow.ChatRowHasCaption", false, cl);
-        XposedHelpers.findAndHookMethod(clsChatRowHasCaption, "I2",
-                new XC_MethodHook() {
-                    @Override
-                    protected void afterHookedMethod(MethodHookParam param) {
-                        try {
-                            swapTranslationLayout(param.thisObject);
-                        } catch (Throwable t) {
-                            XposedBridge.log(TAG + " swapTranslationLayout error: " + t);
+        try {
+            Class<?> clsChatRowHasCaption = Class.forName(
+                    "com.zing.zalo.ui.chat.chatrow.ChatRowHasCaption", false, cl);
+            HookUtil.hookDeep(clsChatRowHasCaption, "I2", new Class<?>[0],
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            try {
+                                swapTranslationLayout(param.thisObject);
+                            } catch (Throwable t) {
+                                XposedBridge.log(TAG + " swapTranslationLayout error: " + t);
+                            }
                         }
-                    }
-                });
-        XposedBridge.log(TAG + " ChatRowHasCaption.I2 hook installed");
+                    });
+            XposedBridge.log(TAG + " ChatRowHasCaption.I2 hook installed");
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + " ChatRowHasCaption hook fail: " + t);
+        }
+    }
+
+    /** 按顺序尝试裸包名类名，返回第一个能加载的；全部失败返回 null。 */
+    private static Class<?> firstClass(ClassLoader cl, String... names) {
+        for (String n : names) {
+            try {
+                return Class.forName(n, false, cl);
+            } catch (Throwable ignored) {
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 译文对象 p7g 的构造函数在不同 Zalo 版本上参数会变（26.11.02 已不是
+     * (String,String,boolean,HashMap)），按「参数个数 + 末位 HashMap」宽容匹配，
+     * 拿不到就返回 null，功能降级但不会让整段 hook 失效。
+     */
+    private static Constructor<?> findTranslationCtor(Class<?> cls) {
+        for (Constructor<?> c : cls.getDeclaredConstructors()) {
+            Class<?>[] ps = c.getParameterTypes();
+            if (ps.length == 4 && ps[0] == String.class && ps[1] == String.class
+                    && ps[2] == boolean.class && HashMap.class.isAssignableFrom(ps[3])) {
+                return c;
+            }
+        }
+        for (Constructor<?> c : cls.getDeclaredConstructors()) {
+            Class<?>[] ps = c.getParameterTypes();
+            if (ps.length >= 2 && ps[0] == String.class && HashMap.class.isAssignableFrom(ps[ps.length - 1])) {
+                return c;
+            }
+        }
+        return null;
     }
 
     private static void onBeforeSetMessage(XC_MethodHook.MethodHookParam param) throws Exception {
@@ -665,17 +735,47 @@ public class MessageHook {
     /** 注入译文到原生槽位 vv3.o3（p7g），不碰原文 vv3.f。targetLang 是目标语代码（p7g.b 与 o7g 键）。 */
     private static void injectTranslation(Object vv3, String translated, String detected,
             String targetLang) throws Exception {
-        HashMap<String, Object> map = new HashMap<String, Object>();
-        map.put(targetLang, ctorO7g.newInstance(translated, null));
-        Object p7g = ctorP7g.newInstance(
-                detected == null ? "vi" : detected, targetLang, Boolean.TRUE, map);
-        setField(vv3, "o3", p7g);
+        if (ctorP7g != null && ctorO7g != null) {
+            HashMap<String, Object> map = new HashMap<String, Object>();
+            map.put(targetLang, ctorO7g.newInstance(translated, null));
+            Object p7g = ctorP7g.newInstance(
+                    detected == null ? "vi" : detected, targetLang, Boolean.TRUE, map);
+            setField(vv3, "o3", p7g);
+        } else {
+            // 新版本 o7g 值类已变，原生译文槽无法构造：把译文直接追加到原文文本字段，
+            // 用弱引用标记已注入，保证“原文在上、译文在下”仍可见，且不会重复翻译。
+            String orig = (String) getField(vv3, "f");
+            String shown = (orig == null || orig.length() == 0) ? translated
+                    : orig + "\n" + translated;
+            setField(vv3, "f", shown);
+            injectedFallback.put(vv3, Boolean.TRUE);
+        }
     }
 
     private static boolean hasTranslation(Object vv3) {
+        if (vv3 == null) {
+            return false;
+        }
+        if (injectedFallback.containsKey(vv3)) {
+            return true;
+        }
         try {
             Object r = callMethod(vv3, "K3");
-            return r instanceof Boolean && ((Boolean) r).booleanValue();
+            if (r instanceof Boolean && ((Boolean) r).booleanValue()) {
+                return true;
+            }
+        } catch (Throwable ignored) {
+        }
+        // 新版 K3 是字段而不是方法
+        try {
+            Object f = getField(vv3, "K3");
+            if (f instanceof Boolean && ((Boolean) f).booleanValue()) {
+                return true;
+            }
+        } catch (Throwable ignored) {
+        }
+        try {
+            return getField(vv3, "o3") != null;
         } catch (Throwable t) {
             return false;
         }
@@ -686,6 +786,13 @@ public class MessageHook {
             Object r = callMethod(vv3, "z1");
             if (r instanceof String && ((String) r).length() > 0) {
                 return (String) r;
+            }
+        } catch (Throwable ignored) {
+        }
+        try {
+            Object f = getField(vv3, "z1");
+            if (f instanceof String && ((String) f).length() > 0) {
+                return (String) f;
             }
         } catch (Throwable ignored) {
         }
@@ -718,17 +825,30 @@ public class MessageHook {
     private static void installMenuHook(final XC_LoadPackage.LoadPackageParam lpparam) throws Throwable {
         final ClassLoader cl = lpparam.classLoader;
         clsMenuView = Class.forName("com.zing.zalo.ui.chat.contextmenu.MessageContextMenuView", false, cl);
-        clsU56 = Class.forName("u56", false, cl);
-        try {
-            mU56b = clsU56.getMethod("b", int.class, int.class, int.class, String.class);
-        } catch (Throwable t) {
-            try {
-                mU56b = clsU56.getMethod("b", int.class, int.class, int.class, CharSequence.class);
-            } catch (Throwable t2) {
-                XposedBridge.log(TAG + " u56.b not found, menu items disabled: " + t2);
-                mU56b = null;
+        // 菜单项工厂：旧版 u56.b，新版 zag.a / lnh.a（签名相同）。
+        String[] factories = {"u56", "zag", "lnh"};
+        String[] names = {"b", "a"};
+        for (String cn : factories) {
+            clsU56 = firstClass(cl, cn);
+            if (clsU56 == null) {
+                continue;
+            }
+            for (String mn : names) {
+                try {
+                    mU56b = clsU56.getMethod(mn, int.class, int.class, int.class, CharSequence.class);
+                    break;
+                } catch (Throwable ignored) {
+                }
+            }
+            if (mU56b != null) {
+                XposedBridge.log(TAG + " menu factory: " + cn + "." + mU56b.getName());
+                break;
             }
         }
+        if (mU56b == null) {
+            XposedBridge.log(TAG + " menu factory not found, menu items disabled");
+        }
+        // 图标/颜色字段在新版改名或移除，取不到就用 0（菜单仍可显示文字）。
         iconTranslate = staticInt("lkk", "zds_ic_translator_line_32", 0);
         colorB60 = staticInt("oik", "b60", 0);
 
@@ -744,10 +864,14 @@ public class MessageHook {
                         }
                     }
                 });
-        // C6(int, vv3, xt3, boolean) 点击分发：拦截自定 id。
-        Class<?> clsXt3 = Class.forName("xt3", false, cl);
-        XposedHelpers.findAndHookMethod(clsMenuView, "C6",
-                int.class, clsVv3, clsXt3, boolean.class,
+        // C6 点击分发：旧版 (int, vv3, xt3, boolean)，新版 (int, ry3, ow3, boolean)。
+        Class<?> clsXt3 = firstClass(cl, "ow3", "xt3");
+        if (clsXt3 == null) {
+            XposedBridge.log(TAG + " C6 param class not found, menu click hook skipped");
+            return;
+        }
+        HookUtil.hookDeep(clsMenuView, "C6",
+                new Class<?>[]{int.class, clsVv3, clsXt3, boolean.class},
                 new XC_MethodHook() {
                     @Override
                     protected void beforeHookedMethod(MethodHookParam param) {
@@ -914,7 +1038,9 @@ public class MessageHook {
             XposedBridge.log(TAG + " translate button ctor hook fail: " + t);
         }
         // 兜底：attach 时再挂一次（构造 hook 万一没命中时补上；靠表去重）。
-        XposedHelpers.findAndHookMethod(clsInputBar, "onAttachedToWindow",
+        // onAttachedToWindow 声明在 View，不在 Zalo 的输入栏类上。
+        // Vector legacy 桥只查本类，findAndHookMethod 会抛 NoSuchMethodError。
+        if (!HookUtil.hookDeep(clsInputBar, "onAttachedToWindow", new Class<?>[0],
                 new XC_MethodHook() {
                     @Override
                     protected void afterHookedMethod(MethodHookParam param) {
@@ -924,7 +1050,9 @@ public class MessageHook {
                             XposedBridge.log(TAG + " attachTranslateButton error: " + t);
                         }
                     }
-                });
+                })) {
+            XposedBridge.log(TAG + " onAttachedToWindow hook unavailable (ctor hook still active)");
+        }
         XposedBridge.log(TAG + " ChatInputBar translate button hook installed");
     }
 

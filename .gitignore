@@ -17,3 +17,10 @@ zalozh_hanhua.apk
 # 新 keystore 只存仓库外（~/.config/zalocn/），CI 从 GitHub Secrets 取。
 *.keystore
 *.jks
+
+# 本机口令/构建中间产物（绝不入库）
+build/.keystore-pass
+build/*.class
+build/_unz/
+build/apkwork/
+build/build_work/
