@@ -9,6 +9,16 @@
 
 ---
 
+## 🔧 v3.0.10（最新）：消息翻译不再时有时无
+
+> 完整说明见 [RELEASE_NOTES_v3.0.10.md](RELEASE_NOTES_v3.0.10.md)。
+
+模块里有个全局开关 `viMode`（Zalo 界面切越南语时本模块不介入）。它原来在 `translate(id, res)`
+里更新，只看资源 id ≥ `0x7f000000` 就当「这是 Zalo 的资源」——但 WebView、系统组件复用同一个
+`Resources`，locale 可能是 `vi`，一次命中就把全局标志打成 `true`，此后消息翻译被整体跳过，
+表现为「界面已经中文了，聊天却不翻」。现在先用 `res.getResourcePackageName(id)` 确认属于
+`com.zing.zalo` 才允许改这个标志。
+
 ## 🔧 v3.0.9：修「界面一半中文一半英文」
 
 > 完整说明见 [RELEASE_NOTES_v3.0.9.md](RELEASE_NOTES_v3.0.9.md)。
