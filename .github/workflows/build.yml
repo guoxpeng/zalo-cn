@@ -40,7 +40,7 @@ jobs:
             NAME="${GITHUB_REF_NAME#v}"
             CODE=$(grep -oP 'android:versionCode="\K[0-9]+' app/src/main/AndroidManifest.xml)
           else
-            NAME="3.0.0-dev"
+            NAME=$(grep -oP 'android:versionName="\K[^"]+' app/src/main/AndroidManifest.xml)
             CODE=$(grep -oP 'android:versionCode="\K[0-9]+' app/src/main/AndroidManifest.xml)
           fi
           echo "name=$NAME" >> "$GITHUB_OUTPUT"
