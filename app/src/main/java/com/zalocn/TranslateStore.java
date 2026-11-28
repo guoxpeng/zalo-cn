@@ -48,7 +48,7 @@ public class TranslateStore {
     // ---- 翻译缓存（同时就是翻译记忆） ----
 
     private static String cacheKey(String text, String fromLang, String toLang) {
-        return "c:" + fromLang + ">" + toLang + ":" + sha1(text);
+        return "c2:" + fromLang + ">" + toLang + ":" + sha1(text);
     }
 
     /**
@@ -65,7 +65,7 @@ public class TranslateStore {
         try {
             Map<String, ?> all = sp.getAll();
             for (String k : all.keySet()) {
-                if (k.startsWith("c:")) {
+                if (k.startsWith("c:") || k.startsWith("c2:")) {
                     keys.add(k);
                 }
             }
@@ -136,6 +136,21 @@ public class TranslateStore {
     }
 
     /** 超量时按时间戳删最旧的缓存（调用方已持锁；不做全量 getAll）。 */
+    /** 删除一条缓存（点“重新翻译”时先清旧译文，强制重新走 API）。 */
+    public synchronized void removeCached(String text, String fromLang, String toLang) {
+        if (text == null) return;
+        try {
+            ensureCacheKeys();
+            String key = cacheKey(text, fromLang, toLang);
+            SharedPreferences.Editor ed = sp.edit();
+            ed.remove(key);
+            ed.apply();
+            cacheKeys.remove(key);
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + " removeCached fail: " + t);
+        }
+    }
+
     private synchronized void trimCache() {
         try {
             ensureCacheKeys();

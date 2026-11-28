@@ -2,6 +2,8 @@ package com.zalocn;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.UiModeManager;
+import android.content.res.Configuration;
 import android.content.DialogInterface;
 import android.graphics.Color;
 import android.graphics.Typeface;
@@ -40,6 +42,47 @@ import java.util.List;
  */
 public class TranslateSettingsActivity extends Activity {
 
+    /* ---------- 主题色：跟随系统暗色模式，所有写死颜色都从这里取 ---------- */
+    private boolean dark = false;
+    // 亮色
+    private static final int L_BG       = 0xFFF5F5F5; // 页面背景
+    private static final int L_CARD     = 0xFFFFFFFF; // 卡片/输入框/下拉外框底色
+    private static final int L_BORDER   = 0xFFE0E0E0; // 卡片边框
+    private static final int L_BORDER2  = 0xFFCCCCCC; // 输入框/按钮/状态框边框
+    private static final int L_TEXT     = 0xFF222222; // 标题文字
+    private static final int L_TEXT2    = 0xFF333333; // 次要文字/按钮字
+    private static final int L_HINT     = 0xFF757575; // 说明文字
+    private static final int L_STATUS   = 0xFFF5F5F5; // 状态框底色
+    // 暗色
+    private static final int D_BG       = 0xFF121212; // 页面背景
+    private static final int D_CARD     = 0xFF1E1E1E; // 卡片/输入框/下拉外框底色
+    private static final int D_BORDER   = 0xFF333333; // 卡片边框
+    private static final int D_BORDER2  = 0xFF444444; // 输入框/按钮/状态框边框
+    private static final int D_TEXT     = 0xFFECECEC; // 标题文字
+    private static final int D_TEXT2    = 0xFFDADADA; // 次要文字/按钮字
+    private static final int D_HINT     = 0xFF9E9E9E; // 说明文字
+    private static final int D_STATUS   = 0xFF2A2A2A; // 状态框底色
+    // 主题无关
+    private static final int ACCENT     = 0xFF4C9AFF; // 蓝色强调（暗色下稍亮，亮色沿用 Zalo 蓝）
+
+    private int cBg()      { return dark ? D_BG : L_BG; }
+    private int cCard()    { return dark ? D_CARD : L_CARD; }
+    private int cBorder()  { return dark ? D_BORDER : L_BORDER; }
+    private int cBorder2() { return dark ? D_BORDER2 : L_BORDER2; }
+    private int cText()    { return dark ? D_TEXT : L_TEXT; }
+    private int cText2()   { return dark ? D_TEXT2 : L_TEXT2; }
+    private int cHint()    { return dark ? D_HINT : L_HINT; }
+    private int cStatus()  { return dark ? D_STATUS : L_STATUS; }
+    private int cAccent()  { return dark ? ACCENT : 0xFF0068FF; }
+    private boolean isDarkMode() {
+        try {
+            int mask = getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK;
+            return mask == Configuration.UI_MODE_NIGHT_YES;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
     private EditText etBaseUrl;
     private EditText etApiKey;
     private EditText etModel;
@@ -75,9 +118,10 @@ public class TranslateSettingsActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        dark = isDarkMode();
 
         ScrollView scroll = new ScrollView(this);
-        scroll.setBackgroundColor(Color.parseColor("#F5F5F5"));
+        scroll.setBackgroundColor(cBg());
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         int pad = dp(16);
@@ -90,7 +134,7 @@ public class TranslateSettingsActivity extends Activity {
         tvPageTitle.setText("Zalo中文增强模块 · 翻译设置");
         tvPageTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 20);
         tvPageTitle.setTypeface(Typeface.DEFAULT_BOLD);
-        tvPageTitle.setTextColor(Color.parseColor("#222222"));
+        tvPageTitle.setTextColor(cText());
         tvPageTitle.setPadding(0, 0, 0, dp(4));
         root.addView(tvPageTitle);
         // 版面设计思路（一行说明，放在所有板块前面）。
@@ -198,7 +242,7 @@ public class TranslateSettingsActivity extends Activity {
         // 状态文字放进浅灰底的状态框里，和按钮、说明分开，一眼能看清。
         tvStatus = new TextView(this);
         tvStatus.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
-        tvStatus.setTextColor(Color.parseColor("#333333"));
+        tvStatus.setTextColor(cText2());
         cardDebug.addView(statusBox(tvStatus), new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         btnTestApi = new Button(this);
@@ -282,13 +326,19 @@ public class TranslateSettingsActivity extends Activity {
     private ArrayAdapter<String> dropdownAdapter(final String[] items) {
         return new ArrayAdapter<String>(this, android.R.layout.simple_spinner_item, items) {
             @Override
+            public View getView(int position, View convertView, ViewGroup parent) {
+                TextView tv = (TextView) super.getView(position, convertView, parent);
+                tv.setTextColor(cText());
+                return tv;
+            }
+            @Override
             public View getDropDownView(int position, View convertView, ViewGroup parent) {
                 TextView tv = new TextView(TranslateSettingsActivity.this);
                 tv.setText(getItem(position));
                 tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
-                tv.setTextColor(Color.parseColor("#222222"));
+                tv.setTextColor(cText());
                 tv.setPadding(dp(16), dp(12), dp(16), dp(12));
-                tv.setBackgroundColor(Color.parseColor("#F5F5F5"));
+                tv.setBackgroundColor(cBg());
                 return tv;
             }
         };
@@ -715,8 +765,8 @@ public class TranslateSettingsActivity extends Activity {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
         GradientDrawable bg = new GradientDrawable();
-        bg.setColor(Color.WHITE);
-        bg.setStroke(dp(1), Color.parseColor("#E0E0E0"));
+        bg.setColor(cCard());
+        bg.setStroke(dp(1), cBorder());
         bg.setCornerRadius(dp(12));
         card.setBackground(bg);
         card.setPadding(dp(14), dp(12), dp(14), dp(12));
@@ -733,8 +783,8 @@ public class TranslateSettingsActivity extends Activity {
         LinearLayout wrap = new LinearLayout(this);
         wrap.setOrientation(LinearLayout.VERTICAL);
         GradientDrawable bg = new GradientDrawable();
-        bg.setColor(Color.WHITE);
-        bg.setStroke(dp(1), Color.parseColor("#CCCCCC"));
+        bg.setColor(cCard());
+        bg.setStroke(dp(1), cBorder2());
         bg.setCornerRadius(dp(8));
         wrap.setBackground(bg);
         wrap.setPadding(dp(4), dp(2), dp(4), dp(2));
@@ -747,22 +797,24 @@ public class TranslateSettingsActivity extends Activity {
      * 之前没指定字号，提示词框的文字比页面其他地方小，看着不匹配）。 */
     private void styleField(EditText et) {
         GradientDrawable bg = new GradientDrawable();
-        bg.setColor(Color.WHITE);
-        bg.setStroke(dp(1), Color.parseColor("#CCCCCC"));
+        bg.setColor(cCard());
+        bg.setStroke(dp(1), cBorder2());
         bg.setCornerRadius(dp(8));
         et.setBackground(bg);
         et.setPadding(dp(10), dp(8), dp(10), dp(8));
         et.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+        et.setTextColor(cText());
+        et.setHintTextColor(cHint());
     }
 
     /** 主按钮：Zalo 蓝底白字 + 圆角（测试当前 API）。
      * 默认 Button 有 48dp 最小高度，太高；去掉最小高度、收窄上下内边距。 */
     private void stylePrimary(Button b) {
         GradientDrawable bg = new GradientDrawable();
-        bg.setColor(Color.parseColor("#0068FF"));
+        bg.setColor(cAccent());
         bg.setCornerRadius(dp(8));
         b.setBackground(bg);
-        b.setTextColor(Color.WHITE);
+        b.setTextColor(cCard());
         b.setMinHeight(0);
         b.setMinimumHeight(0);
         b.setPadding(dp(10), dp(8), dp(10), dp(8));
@@ -773,11 +825,11 @@ public class TranslateSettingsActivity extends Activity {
      * 这里去掉最小高度、收窄上下内边距，让三个按钮和下拉菜单一样高。 */
     private void styleSecondary(Button b) {
         GradientDrawable bg = new GradientDrawable();
-        bg.setColor(Color.WHITE);
-        bg.setStroke(dp(1), Color.parseColor("#CCCCCC"));
+        bg.setColor(cCard());
+        bg.setStroke(dp(1), cBorder2());
         bg.setCornerRadius(dp(8));
         b.setBackground(bg);
-        b.setTextColor(Color.parseColor("#333333"));
+        b.setTextColor(cText2());
         b.setMinHeight(0);
         b.setMinimumHeight(0);
         b.setPadding(dp(8), dp(6), dp(8), dp(6));
@@ -788,8 +840,8 @@ public class TranslateSettingsActivity extends Activity {
         LinearLayout wrap = new LinearLayout(this);
         wrap.setOrientation(LinearLayout.VERTICAL);
         GradientDrawable bg = new GradientDrawable();
-        bg.setColor(Color.parseColor("#F5F5F5"));
-        bg.setStroke(dp(1), Color.parseColor("#CCCCCC"));
+        bg.setColor(cStatus());
+        bg.setStroke(dp(1), cBorder2());
         bg.setCornerRadius(dp(8));
         wrap.setBackground(bg);
         wrap.setPadding(dp(12), dp(10), dp(12), dp(10));
@@ -811,7 +863,7 @@ public class TranslateSettingsActivity extends Activity {
         tv.setText(text);
         tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
         tv.setTypeface(Typeface.DEFAULT_BOLD);
-        tv.setTextColor(Color.parseColor("#0068FF"));
+        tv.setTextColor(cAccent());
         tv.setPadding(0, dp(8), 0, dp(4));
         root.addView(tv);
     }
@@ -822,7 +874,7 @@ public class TranslateSettingsActivity extends Activity {
         tv.setText(text);
         tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
         tv.setTypeface(Typeface.DEFAULT_BOLD);
-        tv.setTextColor(Color.parseColor("#333333"));
+        tv.setTextColor(cText2());
         tv.setPadding(0, dp(8), 0, dp(2));
         root.addView(tv);
     }
@@ -833,7 +885,7 @@ public class TranslateSettingsActivity extends Activity {
         tv.setText(text);
         tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 20);
         tv.setTypeface(Typeface.DEFAULT_BOLD);
-        tv.setTextColor(Color.parseColor("#0068FF"));
+        tv.setTextColor(cAccent());
         tv.setPadding(0, dp(8), 0, dp(4));
         root.addView(tv);
     }
@@ -842,7 +894,7 @@ public class TranslateSettingsActivity extends Activity {
         TextView tv = new TextView(this);
         tv.setText(text);
         tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
-        tv.setTextColor(Color.parseColor("#757575"));
+        tv.setTextColor(cHint());
         tv.setPadding(0, 0, 0, dp(8));
         root.addView(tv);
     }
@@ -850,6 +902,7 @@ public class TranslateSettingsActivity extends Activity {
     private EditText addField(LinearLayout root, String label, String hint) {
         TextView tv = new TextView(this);
         tv.setText(label);
+        tv.setTextColor(cText2());
         tv.setPadding(0, dp(8), 0, dp(2));
         root.addView(tv);
         EditText et = new EditText(this);
@@ -864,6 +917,7 @@ public class TranslateSettingsActivity extends Activity {
     private CheckBox addCheck(LinearLayout root, String text) {
         CheckBox cb = new CheckBox(this);
         cb.setText(text);
+        cb.setTextColor(cText());
         root.addView(cb);
         return cb;
     }

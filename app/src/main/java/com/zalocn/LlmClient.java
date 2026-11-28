@@ -29,7 +29,7 @@ public class LlmClient {
 
     /** 一次翻译调用的超时（毫秒）：连接 10 秒、读取 30 秒。 */
     private static final int CONNECT_TIMEOUT_MS = 10000;
-    private static final int READ_TIMEOUT_MS = 30000;
+    private static final int READ_TIMEOUT_MS = 60000;
 
     /**
      * 翻译一段文本。
@@ -41,7 +41,14 @@ public class LlmClient {
      * @param context  上下文（同一会话最近几条消息原文，供大模型消歧；可为空）
      * @return 译文；失败返回 null
      */
+    /** 翻译入口：单次请求。失败重试由 MessageHook 层统一处理，避免多层重试叠加。 */
     public static String translate(TranslateConfig cfg, String text,
+                                   String fromLang, String toLang, String context) {
+        return translateOnce(cfg, text, fromLang, toLang, context);
+    }
+
+    /** 单次翻译请求。 */
+    private static String translateOnce(TranslateConfig cfg, String text,
                                    String fromLang, String toLang, String context) {
         if (cfg == null || text == null || text.trim().length() == 0) {
             return null;
@@ -87,12 +94,23 @@ public class LlmClient {
                 sys.append("你是一名翻译。把用户给出的").append(fromName)
                    .append("翻译成").append(toName).append("。");
             }
-            sys.append("只输出译文，不要解释、不要加引号、")
+            sys.append("只输出" + toName + "译文，绝对不要重复或输出原文，不要解释、不要加引号、")
                .append("不要补充原文没有的内容；人名、地名、品牌名保留原文；语气保持口语自然。");
             // 用户自定义提示词（设置页填）：追加到系统提示词后，纠正直译错误
             // （如地名按越南官方译名）。空 = 不用。
             if (cfg.customPrompt != null && cfg.customPrompt.trim().length() > 0) {
-                sys.append("\n另外，请遵守以下翻译要求：\n").append(cfg.customPrompt.trim());
+                String cp = cfg.customPrompt.trim();
+                // 过滤会与"翻译成目标语言"冲突的格式/方向指令（如"格式 中文-越南语"），
+                // 这类句子会让模型误以为要输出原文语言，导致重复原文。
+                StringBuilder safe = new StringBuilder();
+                for (String seg : cp.split("[。\n；;]")) {
+                    if (seg.contains("中文-越南语") || seg.contains("保留输入的中文原文")
+                            || seg.contains("换行输出") || seg.contains("全局保留")) continue;
+                    if (seg.trim().length() > 0) safe.append(seg.trim()).append("。");
+                }
+                if (safe.length() > 0) {
+                    sys.append("\n另外，请遵守以下翻译要求：\n").append(safe);
+                }
             }
             StringBuilder user = new StringBuilder();
             if (context != null && context.length() > 0) {
